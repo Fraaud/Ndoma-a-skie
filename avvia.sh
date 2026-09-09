@@ -30,7 +30,11 @@ chiudi() {
 trap chiudi INT TERM
 
 verde "server web  -> http://localhost:8000"
-uvicorn app.main:app --reload --port 8000 &
+# Sorveglia SOLO app/: test, script, importatori e venv non fanno parte del
+# server, e se la cartella e' sincronizzata (iCloud, Dropbox) ogni ritocco del
+# servizio di sync farebbe ripartire uvicorn a raffica.
+uvicorn app.main:app --reload --reload-dir app --port 8000 \
+        --reload-exclude "* 2.py" --reload-exclude "*.db*" &
 PID_WEB=$!
 
 if [ "${1:-}" != "--solo-web" ]; then
