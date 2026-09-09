@@ -1,4 +1,4 @@
-/* 'Nduma a sghie' - mini app Telegram.
+/* Ndoma a skié - mini app Telegram.
    Nessuna libreria oltre a Leaflet: sta tutto in un file, si legge in mezz'ora. */
 
 const TG = window.Telegram?.WebApp;

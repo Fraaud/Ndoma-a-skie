@@ -75,12 +75,17 @@ async def _elenco_file(client: httpx.AsyncClient, giorno: dt.date) -> list[str]:
     r = await client.get(url)
     if r.status_code != 200:
         return []
-    nomi = re.findall(r'href="([^"?]+\.json)"', r.text)
-    return [n.split("/")[-1] for n in nomi]
+    nomi = [n.split("/")[-1] for n in re.findall(r'href="([^"?]+\.json)"', r.text)]
+    # L'archivio pubblica, accanto al bollettino completo, due estratti:
+    #   2026-01-15-IT-21.problems.json   e   ....ratings.json
+    # Scaricarli sarebbe inutile (sono sottoinsiemi) e li parseremmo come se
+    # fossero bollettini interi.
+    return [n for n in nomi if not n.endswith((".problems.json", ".ratings.json"))]
 
 
 async def scarica_bollettini(
-    giorno: dt.date | None = None, prefissi: tuple[str, ...] = ("IT-21", "FR")
+    giorno: dt.date | None = None,
+    prefissi: tuple[str, ...] = ("IT-21", "FR", "IT-MeteoMont"),
 ) -> dict[str, dict]:
     """Scarica i bollettini del giorno e restituisce {region_id: bollettino_normalizzato}."""
     giorno = giorno or dt.date.today()

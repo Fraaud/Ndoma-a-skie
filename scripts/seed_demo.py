@@ -3,7 +3,7 @@
 ATTENZIONE: le coordinate qui dentro sono approssimative e servono solo a far
 vedere come si presenta l'app. NON sono dati da usare in montagna e non vanno
 lasciati nel database vero: appena `scripts/importa.py` funziona, cancella
-data/nduma.db e riparti dalle fonti vere.
+data/ndoma.db e riparti dalle fonti vere.
 
   python scripts/seed_demo.py
 """

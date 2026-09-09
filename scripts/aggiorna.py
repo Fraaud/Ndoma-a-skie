@@ -5,7 +5,7 @@ dell'app: il venerdi' sera si collegano tutti insieme e con 200 gite si
 sforerebbero i limiti gratuiti in pochi minuti.
 
 Da mettere in cron (esempio, ogni notte alle 4):
-  0 4 * * *  cd /percorso/nduma && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
+  0 4 * * *  cd /percorso/ndoma-a-skie && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
 """
 from __future__ import annotations
 

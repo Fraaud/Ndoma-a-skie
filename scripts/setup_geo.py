@@ -98,15 +98,16 @@ def comuni() -> int:
 
 def micro_regioni_eaws() -> int:
     feature = []
-    for paese in settings.eaws_countries:
+    for regione in settings.eaws_regioni:
         gj = None
         for tmpl in (settings.url_eaws_regions_latest_tmpl, settings.url_eaws_regions_tmpl):
-            gj = _scarica(tmpl.format(country=paese))
+            gj = _scarica(tmpl.format(regione=regione))
             if gj:
                 break
         if not gj:
-            print(f"  micro-regioni {paese}: non scaricate")
+            print(f"  micro-regioni {regione}: non scaricate")
             continue
+        print(f"  micro-regioni {regione}: {len(gj.get('features', []))} poligoni")
         feature.extend(gj.get("features", []))
     if not feature:
         print("  ATTENZIONE: nessuna micro-regione EAWS. I bollettini valanghe")

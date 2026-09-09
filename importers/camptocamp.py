@@ -4,15 +4,29 @@ Prendiamo SOLO dati strutturati: nome, coordinate, quote, esposizione,
 difficolta'. Nessun testo di relazione, nessuna foto. La descrizione resta
 sul sito d'origine, a cui ogni scheda rimanda: e' il patto della licenza e
 anche il modo giusto di stare in una community.
+
+NOTA SUL FILTRO GEOGRAFICO
+--------------------------
+L'API accetta il parametro `bbox` ma di fatto lo ignora (provato: con la
+bbox del Cuneese il totale SALE invece di scendere, e il primo risultato e'
+nel Vercors). Quindi si scorre l'elenco completo e si filtra qui, sulle
+coordinate che l'elenco stesso restituisce. Le pagine sono leggere; le
+chiamate di dettaglio, che sono quelle pesanti, si fanno solo per gli
+itinerari che cadono davvero nella zona.
+
+Attenzione anche alla forma della geometria, che cambia fra i due endpoint:
+  elenco   -> {"type": "Point", "coordinates": [x, y]}
+  dettaglio-> {"geom": "{\\"type\\": \\"Point\\", ...}"}  (stringa JSON)
+In entrambi i casi le coordinate sono in EPSG:3857 (metri), non in gradi.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
 
 import httpx
-from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import session_scope
@@ -20,6 +34,7 @@ from app.geo import comune_di, dentro_bbox, mercator_to_wgs84, regione_eaws_di
 from app.models import Gita
 
 LICENZA = "CC-BY-SA (camptocamp.org)"
+PER_PAGINA = 100
 
 
 def wgs84_to_mercator(lon: float, lat: float) -> tuple[float, float]:
@@ -28,61 +43,40 @@ def wgs84_to_mercator(lon: float, lat: float) -> tuple[float, float]:
     return x, y * 20037508.34 / 180.0
 
 
-def _punto_da_geom(geom: dict | None) -> tuple[float, float] | None:
-    """geom.geom e' una stringa GeoJSON Point in EPSG:3857."""
-    if not geom:
+def _coordinate(geometry) -> tuple[float, float] | None:
+    """(lat, lon) da una geometria camptocamp, in qualunque delle sue forme."""
+    if not geometry:
         return None
-    import json
 
-    for chiave in ("geom", "geom_detail"):
-        raw = geom.get(chiave)
-        if not raw:
-            continue
-        try:
-            g = json.loads(raw) if isinstance(raw, str) else raw
-        except Exception:
-            continue
+    candidati = []
+    if isinstance(geometry, dict):
+        if "coordinates" in geometry:          # elenco: GeoJSON diretto
+            candidati.append(geometry)
+        for chiave in ("geom", "geom_detail"):  # dettaglio: stringa JSON
+            raw = geometry.get(chiave)
+            if not raw:
+                continue
+            try:
+                candidati.append(json.loads(raw) if isinstance(raw, str) else raw)
+            except Exception:
+                continue
+
+    for g in candidati:
         coords = g.get("coordinates")
         if not coords:
             continue
-        if g.get("type") == "Point":
+        tipo = g.get("type")
+        if tipo == "Point":
             x, y = coords[0], coords[1]
-        elif g.get("type") in ("LineString", "MultiLineString"):
-            piatto = coords[0] if g["type"] == "MultiLineString" else coords
-            x, y = piatto[0][0], piatto[0][1]
+        elif tipo == "LineString":
+            x, y = coords[0][0], coords[0][1]
+        elif tipo == "MultiLineString":
+            x, y = coords[0][0][0], coords[0][0][1]
         else:
             continue
         lon, lat = mercator_to_wgs84(x, y)
         return lat, lon
     return None
-
-
-async def _elenco(client: httpx.AsyncClient, offset: int, limite: int = 100) -> dict:
-    x1, y1 = wgs84_to_mercator(settings.bbox[0], settings.bbox[1])
-    x2, y2 = wgs84_to_mercator(settings.bbox[2], settings.bbox[3])
-    params = {
-        "act": "skitouring",
-        "limit": limite,
-        "offset": offset,
-        "bbox": f"{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}",
-    }
-    r = await client.get(f"{settings.url_camptocamp}/routes", params=params)
-    if r.status_code == 400:
-        # il filtro bbox non e' accettato: si scarica tutto e si filtra in locale
-        params.pop("bbox")
-        r = await client.get(f"{settings.url_camptocamp}/routes", params=params)
-    r.raise_for_status()
-    return r.json()
-
-
-async def _dettaglio(client: httpx.AsyncClient, doc_id: int) -> dict | None:
-    try:
-        r = await client.get(f"{settings.url_camptocamp}/routes/{doc_id}")
-        if r.status_code != 200:
-            return None
-        return r.json()
-    except Exception:
-        return None
 
 
 def _titolo(doc: dict) -> str | None:
@@ -96,52 +90,107 @@ def _titolo(doc: dict) -> str | None:
 
 
 def _attacco(dettaglio: dict) -> tuple[float, float] | None:
-    """Il punto di partenza dell'itinerario: nelle associazioni c'e' il
-    waypoint di accesso, che e' esattamente il parcheggio che ci serve."""
+    """Il punto di partenza: nelle associazioni c'e' il waypoint di accesso,
+    che e' esattamente il parcheggio che ci serve per meteo e routing."""
     ass = (dettaglio.get("associations") or {}).get("waypoints") or []
     preferiti = [w for w in ass if w.get("waypoint_type") in ("access", "access_ravine")]
     for w in preferiti + ass:
-        p = _punto_da_geom(w.get("geometry"))
+        p = _coordinate(w.get("geometry"))
         if p:
             return p
     return None
 
 
-async def importa(limite_totale: int = 2000, pausa: float = 0.35) -> int:
-    """Scarica gli itinerari di scialpinismo nella bbox configurata."""
-    nuovi = 0
+# ------------------------------------------------------------------ rete
+
+
+async def _pagina(c: httpx.AsyncClient, offset: int) -> list[dict]:
+    r = await c.get(
+        f"{settings.url_camptocamp}/routes",
+        params={"act": "skitouring", "limit": PER_PAGINA, "offset": offset},
+    )
+    r.raise_for_status()
+    return r.json().get("documents", [])
+
+
+async def _dettaglio(c: httpx.AsyncClient, doc_id: int) -> dict | None:
+    try:
+        r = await c.get(f"{settings.url_camptocamp}/routes/{doc_id}")
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
+# ----------------------------------------------------------------- import
+
+
+async def importa(
+    pagine_massime: int = 700, pausa_elenco: float = 0.15, pausa_dettaglio: float = 0.35
+) -> int:
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    async with httpx.AsyncClient(timeout=40, headers=headers, follow_redirects=True) as c:
-        offset, visti = 0, 0
-        while visti < limite_totale:
-            dati = await _elenco(c, offset)
-            documenti = dati.get("documents", [])
+    candidati: list[tuple[dict, tuple[float, float]]] = []
+
+    async with httpx.AsyncClient(timeout=45, headers=headers, follow_redirects=True) as c:
+        # --- fase 1: scorri l'elenco e tieni solo quello che cade nella zona
+        print("  fase 1: cerco gli itinerari nella zona...")
+        offset = 0
+        for pagina in range(pagine_massime):
+            try:
+                documenti = await _pagina(c, offset)
+            except Exception as e:
+                print(f"  errore alla pagina {pagina} (offset {offset}): {e}")
+                break
             if not documenti:
                 break
             for doc in documenti:
-                visti += 1
-                punto = _punto_da_geom(doc.get("geometry"))
-                if not punto or not dentro_bbox(punto[1], punto[0]):
+                attivita = doc.get("activities") or []
+                if attivita and "skitouring" not in attivita:
                     continue
-                dett = await _dettaglio(c, doc["document_id"])
-                await asyncio.sleep(pausa)  # gentilezza verso un server di volontari
-                if not dett:
-                    continue
-                attacco = _attacco(dett) or punto
-                nome = _titolo(dett) or _titolo(doc)
-                if not nome:
-                    continue
-                if _salva(doc, dett, nome, attacco, punto):
-                    nuovi += 1
+                punto = _coordinate(doc.get("geometry"))
+                if punto and dentro_bbox(punto[1], punto[0]):
+                    candidati.append((doc, punto))
             offset += len(documenti)
-            print(f"  camptocamp: {visti} esaminati, {nuovi} importati")
-            if len(documenti) < 100:
+            if pagina % 20 == 0:
+                print(f"    {offset} itinerari esaminati, {len(candidati)} nella zona")
+            if len(documenti) < PER_PAGINA:
                 break
+            await asyncio.sleep(pausa_elenco)
+
+        print(f"  fase 1 finita: {offset} esaminati, {len(candidati)} nella zona")
+        if not candidati:
+            print("  ATTENZIONE: nessun itinerario trovato nella bbox.")
+            print(f"  Controlla BBOX nel .env (ora: {settings.bbox}).")
+            return 0
+
+        # --- fase 2: dettaglio solo per quelli buoni (qui sta il costo)
+        print(f"  fase 2: scarico il dettaglio di {len(candidati)} itinerari...")
+        nuovi = 0
+        for i, (doc, punto) in enumerate(candidati, 1):
+            if _gia_presente(str(doc["document_id"])):
+                continue
+            dett = await _dettaglio(c, doc["document_id"])
+            await asyncio.sleep(pausa_dettaglio)
+            if not dett:
+                continue
+            nome = _titolo(dett) or _titolo(doc)
+            if not nome:
+                continue
+            attacco = _attacco(dett) or punto
+            if _salva(doc, dett, nome, attacco, punto):
+                nuovi += 1
+            if i % 25 == 0:
+                print(f"    {i}/{len(candidati)} - {nuovi} importate")
+
     return nuovi
 
 
+def _gia_presente(fonte_id: str) -> bool:
+    with session_scope() as db:
+        return db.query(Gita).filter_by(fonte="camptocamp", fonte_id=fonte_id).first() is not None
+
+
 def _salva(doc: dict, dett: dict, nome: str, attacco, cima) -> bool:
-    with session_scope() as db:  # type: Session
+    with session_scope() as db:
         fonte_id = str(doc["document_id"])
         if db.query(Gita).filter_by(fonte="camptocamp", fonte_id=fonte_id).first():
             return False
@@ -150,7 +199,7 @@ def _salva(doc: dict, dett: dict, nome: str, attacco, cima) -> bool:
         autori = ", ".join(
             sorted({(a.get("name") or "") for a in (dett.get("associations", {}) or {}).get("users", [])})
         ) or None
-        g = Gita(
+        db.add(Gita(
             nome=nome[:200],
             fonte="camptocamp",
             fonte_id=fonte_id,
@@ -163,15 +212,14 @@ def _salva(doc: dict, dett: dict, nome: str, attacco, cima) -> bool:
             quota_min=dett.get("elevation_min") or doc.get("elevation_min"),
             quota_max=dett.get("elevation_max") or doc.get("elevation_max"),
             dislivello=dett.get("height_diff_up") or doc.get("height_diff_up"),
-            esposizione=",".join(dett.get("orientations") or []) or None,
+            esposizione=",".join(dett.get("orientations") or doc.get("orientations") or []) or None,
             difficolta=dett.get("ski_rating") or dett.get("global_rating"),
             comune=c.get("nome"),
             istat=str(c["istat"]) if c.get("istat") else None,
-            paese="FR" if not c.get("istat") else "IT",
+            paese="IT" if c.get("istat") else "FR",
             eaws_region=regione_eaws_di(lat, lon),
             verificata=False,
-        )
-        db.add(g)
+        ))
     return True
 
 

@@ -1,4 +1,4 @@
-# 'NDUMA A SGHIE'
+# NDOMA A SKIÉ
 
 Mini app Telegram per lo scialpinismo del Cuneese e del Mercantour.
 Progetto no-profit, senza pubblicita', costruito su fonti di dati aperte
@@ -132,7 +132,7 @@ dell'app**: il venerdi' sera si collegano tutti insieme e con 200 gite si
 sfora subito il tier gratuito.
 
 ```
-0 4 * * *  cd /percorso/nduma && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
+0 4 * * *  cd /percorso/ndoma-a-skie && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
 ```
 
 ### 6. Avvia
@@ -292,8 +292,12 @@ Il rimborso benzina lo decidono in chat come hanno sempre fatto.
 
 ## Licenza e responsabilita'
 
-I dati degli itinerari appartengono alle rispettive fonti, con le licenze
-indicate sopra: vanno mantenute attribuzione e link.
+Il codice e' rilasciato con licenza **MIT** (vedi [LICENSE](LICENSE)): usalo,
+modificalo, fanne una versione per la tua valle.
+
+I dati degli itinerari, i bollettini e le previsioni **non** sono coperti da
+quella licenza: appartengono alle rispettive fonti, con le licenze indicate
+sopra, e vanno mantenute attribuzione e link.
 
 Questa app **non valuta la sicurezza di un itinerario** e non sostituisce il
 bollettino valanghe ufficiale, la preparazione, l'attrezzatura e il giudizio

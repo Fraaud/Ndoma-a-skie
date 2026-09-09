@@ -68,16 +68,17 @@ async def principale() -> None:
                 esito(False, f"json non interpretabile: {e}")
 
         print("\n3) Micro-regioni valanghe EAWS")
-        for paese in settings.eaws_countries:
+        for regione in settings.eaws_regioni:
             trovato = False
             for tmpl in (settings.url_eaws_regions_latest_tmpl, settings.url_eaws_regions_tmpl):
-                rr = await prova(c, f"micro-regioni {paese}", tmpl.format(country=paese))
+                rr = await prova(c, f"micro-regioni {regione}", tmpl.format(regione=regione))
                 if rr:
                     trovato = True
                     break
             if not trovato:
-                esito(False, f"nessuno schema di URL ha funzionato per {paese}: "
-                             "controlla regions.avalanches.org e aggiorna config.py")
+                esito(False, f"nessuno schema di URL ha funzionato per {regione}: "
+                             "l'Italia e' divisa per regione (IT-21 Piemonte, IT-23 Lombardia...), "
+                             "controlla regions.avalanches.org e aggiorna eaws_regioni in config.py")
 
         print("\n4) Bollettini valanghe (archivio EAWS)")
         oggi = dt.date.today()

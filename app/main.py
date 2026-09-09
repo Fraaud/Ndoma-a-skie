@@ -25,7 +25,7 @@ from app.services import valanghe as val_srv
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-app = FastAPI(title="'Nduma a sghie'", version="0.1.0")
+app = FastAPI(title="Ndoma a skié", version="0.1.0")
 init_db()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

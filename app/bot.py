@@ -21,12 +21,12 @@ from app.db import init_db, session_scope
 from app.models import Gita, Uscita, Utente
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
-log = logging.getLogger("nduma")
+log = logging.getLogger("ndoma")
 
 
 def _tastiera() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("Apri 'Nduma a sghie'", web_app=WebAppInfo(url=settings.webapp_url))
+        InlineKeyboardButton("Apri Ndoma a skié", web_app=WebAppInfo(url=settings.webapp_url))
     ]])
 
 
@@ -37,7 +37,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             db.add(Utente(tg_id=u.id, username=u.username,
                           nome=" ".join(x for x in [u.first_name, u.last_name] if x)))
     await update.message.reply_text(
-        "<b>'NDUMA A SGHIE'</b>\n\n"
+        "<b>NDOMA A SKIÉ</b>\n\n"
         "Passaggi in auto per andare in gita, e per ogni itinerario meteo, "
         "qualita' della neve e bollettino valanghe.\n\n"
         "Apri l'app qui sotto: pubblichi un'offerta o una ricerca in due tap, "
