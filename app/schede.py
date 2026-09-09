@@ -9,7 +9,7 @@ import datetime as dt
 
 from sqlalchemy.orm import Session
 
-from app.models import CacheBollettino, CacheMeteo, Gita
+from app.models import CacheBollettino, CacheMeteo, Condizioni, Gita
 from app.services import meteo as meteo_srv
 from app.services import powder as powder_srv
 from app.services import valanghe as val_srv
@@ -27,9 +27,17 @@ def _scaduta(quando: dt.datetime | None, ttl: dt.timedelta) -> bool:
 
 
 async def meteo_gita(db: Session, gita: Gita, forza: bool = False) -> dict | None:
+    """Meteo dalla cache. Scarica SOLO se forza=True.
+
+    Le richieste web non devono mai dipendere da un servizio esterno: se
+    Open-Meteo e' lento, a rallentare sarebbe l'app in mano all'utente.
+    A scaricare ci pensa scripts/aggiorna.py, di notte.
+    """
     oggi = dt.date.today()
     riga = db.query(CacheMeteo).filter_by(gita_id=gita.id, giorno=oggi).one_or_none()
-    if riga and not forza and not _scaduta(riga.aggiornato_il, TTL_METEO):
+    if not forza:
+        return riga.payload if riga else None
+    if riga and not _scaduta(riga.aggiornato_il, TTL_METEO):
         return riga.payload
     try:
         dati = await meteo_srv.previsioni(gita.lat, gita.lon, quota=gita.quota_min or gita.quota_max)
@@ -53,7 +61,9 @@ async def bollettino_gita(db: Session, gita: Gita, forza: bool = False) -> dict 
         .filter_by(eaws_region=gita.eaws_region, giorno=oggi)
         .one_or_none()
     )
-    if riga and not forza and not _scaduta(riga.aggiornato_il, TTL_BOLLETTINO):
+    if not forza:                       # come per il meteo: niente rete nelle richieste
+        return riga.payload if riga else None
+    if riga and not _scaduta(riga.aggiornato_il, TTL_BOLLETTINO):
         return riga.payload
     try:
         tutti = await val_srv.scarica_bollettini(oggi)
@@ -70,6 +80,44 @@ async def bollettino_gita(db: Session, gita: Gita, forza: bool = False) -> dict 
                                payload=payload, fonte_url=payload.get("fonte_url")))
     db.commit()
     return payload
+
+
+async def aggiorna_condizioni(db: Session, gita: Gita, giorni: int = 7) -> int:
+    """Calcola e salva punteggio neve e pericolo per i prossimi `giorni`.
+
+    Da chiamare da scripts/aggiorna.py, mai da una richiesta web.
+    """
+    dati_meteo = await meteo_gita(db, gita)
+    if not dati_meteo:
+        return 0
+    boll = await bollettino_gita(db, gita)
+    evidenze = val_srv.evidenzia(gita, boll) if boll else []
+    grado = (boll or {}).get("grado_massimo")
+
+    oggi = dt.date.today()
+    scritte = 0
+    for i in range(giorni):
+        giorno = oggi + dt.timedelta(days=i)
+        p = powder_srv.calcola(dati_meteo, giorno)
+        if p.get("punteggio") is None:
+            continue
+        riga = db.query(Condizioni).filter_by(gita_id=gita.id, giorno=giorno).one_or_none()
+        if riga is None:
+            riga = Condizioni(gita_id=gita.id, giorno=giorno)
+            db.add(riga)
+        riga.punteggio = p["punteggio"]
+        riga.etichetta = powder_srv.etichetta(p["punteggio"])
+        riga.neve_24h = p.get("neve_24h_cm")
+        riga.neve_72h = p.get("neve_72h_cm")
+        riga.vento_max = p.get("vento_max_kmh")
+        riga.fattore = (p.get("fattori") or [None])[0]
+        riga.avviso = p.get("avviso_valanghe")
+        riga.grado_valanghe = grado
+        riga.evidenziatore = evidenze
+        riga.aggiornato_il = dt.datetime.now(dt.timezone.utc)
+        scritte += 1
+    db.commit()
+    return scritte
 
 
 def gita_dict(g: Gita) -> dict:

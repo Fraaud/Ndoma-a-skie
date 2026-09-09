@@ -1,13 +1,16 @@
 """API + mini app.  Avvio:  uvicorn app.main:app --reload"""
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
@@ -18,21 +21,58 @@ from app.auth import utente_corrente
 from app.config import settings
 from app.db import get_db, init_db
 from app.geo import comune_di, distanza_km
-from app.models import Comune, Gita, Match, Uscita, Utente
+from app.models import Comune, Condizioni, Gita, Match, Uscita, Utente
 from app.services import match as match_srv
 from app.services import routing as routing_srv
 from app.services import valanghe as val_srv
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-app = FastAPI(title="Ndoma a skié", version="0.1.0")
-init_db()
+
+def _scalda_indici() -> None:
+    """Carica i GeoJSON e costruisce gli indici spaziali all'avvio.
+
+    Senza questo, il costo (secondi) lo paga la prima richiesta che ne ha
+    bisogno - tipicamente la prima pubblicazione di un'uscita - che nel
+    frattempo blocca il server e fa scadere la connessione del client.
+    """
+    from app.geo import indice_comuni, indice_eaws
+
+    for nome, indice in (("comuni", indice_comuni()), ("micro-regioni", indice_eaws())):
+        print(f"  indice {nome}: {'pronto' if indice.disponibile else 'ASSENTE'}")
+
+
+@asynccontextmanager
+async def _ciclo_vita(app: FastAPI):
+    init_db()
+    print("Preparo gli indici geografici...")
+    await asyncio.to_thread(_scalda_indici)
+    yield
+
+
+app = FastAPI(title="Ndoma a skié", version="0.1.0", lifespan=_ciclo_vita)
+# In valle si naviga con una tacca di segnale: le risposte JSON compresse
+# arrivano molto prima, e il catalogo e' quasi tutto testo.
+app.add_middleware(GZipMiddleware, minimum_size=800)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
 def home():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    """La pagina viene servita con un numero di versione appeso a JS e CSS.
+
+    Il webview di Telegram tiene in cache in modo aggressivo: senza questo,
+    dopo ogni modifica al codice continueresti a vedere la versione vecchia
+    e a chiederti perche' la correzione non ha effetto.
+    """
+    with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
+        html = f.read()
+    versione = int(max(
+        os.path.getmtime(os.path.join(STATIC_DIR, n)) for n in ("app.js", "style.css")
+    ))
+    html = html.replace("/static/app.js", f"/static/app.js?v={versione}")
+    html = html.replace("/static/style.css", f"/static/style.css?v={versione}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/config")
@@ -133,23 +173,39 @@ async def weekend(
     volentieri il giovedi' sera, e chi la legge poi trova i passaggi.
     """
     d = dt.date.fromisoformat(giorno) if giorno else _prossimo_sabato()
-    # solo le gite con cache meteo gia' popolata: il resto lo riempie il cron
-    gite = db.query(Gita).filter(Gita.attiva.is_(True)).all()
-    out = []
-    for g in gite:
-        s = await schede.scheda(db, g, d)
-        p = (s.get("powder") or {}).get("punteggio")
-        if p is None:
-            continue
-        out.append({
-            "gita": s["gita"],
-            "powder": s["powder"],
-            "meteo": s.get("meteo"),
-            "valanghe_grado": (s.get("valanghe") or {}).get("grado_massimo"),
-            "evidenziatore": (s.get("valanghe") or {}).get("evidenziatore", []),
-        })
-    out.sort(key=lambda x: x["powder"]["punteggio"], reverse=True)
-    return {"giorno": d.isoformat(), "risultati": out[:limite], "disclaimer": val_srv.DISCLAIMER}
+
+    # Lettura pura da tabella, ordinata e limitata: nessun calcolo, nessuna
+    # chiamata esterna. I punteggi li scrive scripts/aggiorna.py.
+    righe = (
+        db.query(Condizioni, Gita)
+        .join(Gita, Gita.id == Condizioni.gita_id)
+        .filter(Condizioni.giorno == d, Gita.attiva.is_(True))
+        .order_by(Condizioni.punteggio.desc())
+        .limit(limite)
+        .all()
+    )
+    risultati = [{
+        "gita": schede.gita_dict(g),
+        "powder": {
+            "punteggio": c.punteggio,
+            "etichetta": c.etichetta,
+            "neve_24h_cm": c.neve_24h,
+            "neve_72h_cm": c.neve_72h,
+            "vento_max_kmh": c.vento_max,
+            "fattori": [c.fattore] if c.fattore else [],
+            "avviso_valanghe": c.avviso,
+        },
+        "valanghe_grado": c.grado_valanghe,
+        "evidenziatore": c.evidenziatore or [],
+    } for c, g in righe]
+
+    return {
+        "giorno": d.isoformat(),
+        "risultati": risultati,
+        "disclaimer": val_srv.DISCLAIMER,
+        "suggerimento": None if risultati else
+            "Nessun punteggio per questo giorno: lancia scripts/aggiorna.py",
+    }
 
 
 def _prossimo_sabato(oggi: dt.date | None = None) -> dt.date:
@@ -266,9 +322,43 @@ def elenco_uscite(
     return [_uscita_dict(db, u) for u in uscite]
 
 
+async def _dopo_pubblicazione(uscita_id: int) -> None:
+    """Calcolo del percorso, match e notifiche: DOPO aver risposto al client.
+
+    Sono le operazioni lente (routing, intersezioni geografiche, chiamate a
+    Telegram). Tenerle dentro la richiesta faceva scadere la connessione e
+    l'utente vedeva il pulsante 'Pubblica' non rispondere.
+    """
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        us = db.get(Uscita, uscita_id)
+        if not us:
+            return
+        if us.tipo == "OFFRO" and us.gita_id and us.istat_partenza and us.lat_partenza:
+            gita = db.get(Gita, us.gita_id)
+            try:
+                await routing_srv.calcola_percorso(
+                    db, us.istat_partenza, us.lat_partenza, us.lon_partenza, gita
+                )
+            except Exception as e:
+                print(f"percorso non calcolato per l'uscita {uscita_id}: {e}")
+        try:
+            for m in match_srv.aggiorna_match(db, us):
+                await _notifica_match(db, m)
+        except Exception as e:
+            print(f"match non calcolati per l'uscita {uscita_id}: {e}")
+    finally:
+        db.close()
+
+
 @app.post("/api/uscite")
 async def crea_uscita(
-    dati: NuovaUscita, u: Utente = Depends(utente_corrente), db: Session = Depends(get_db)
+    dati: NuovaUscita,
+    sfondo: BackgroundTasks,
+    u: Utente = Depends(utente_corrente),
+    db: Session = Depends(get_db),
 ):
     if dati.tipo not in ("OFFRO", "CERCO", "COMPAGNI"):
         raise HTTPException(400, "tipo non valido")
@@ -297,20 +387,9 @@ async def crea_uscita(
     db.commit()
     db.refresh(us)
 
-    # percorso + comuni attraversati (serve solo a chi guida)
-    if us.tipo == "OFFRO" and us.gita_id and us.istat_partenza and us.lat_partenza:
-        gita = db.get(Gita, us.gita_id)
-        try:
-            await routing_srv.calcola_percorso(
-                db, us.istat_partenza, us.lat_partenza, us.lon_partenza, gita
-            )
-        except Exception:
-            pass
-
-    nuovi = match_srv.aggiorna_match(db, us)
-    for m in nuovi:
-        await _notifica_match(db, m)
-    return _uscita_dict(db, us, con_match=True)
+    # Si risponde subito: percorso, match e notifiche vanno in sottofondo.
+    sfondo.add_task(_dopo_pubblicazione, us.id)
+    return _uscita_dict(db, us)
 
 
 @app.get("/api/uscite/{uscita_id}")

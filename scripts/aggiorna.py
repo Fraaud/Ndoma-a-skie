@@ -28,7 +28,7 @@ async def principale(pausa: float = 0.25) -> None:
     gite = db.query(Gita).filter(Gita.attiva.is_(True)).all()
     print(f"{dt.datetime.now():%Y-%m-%d %H:%M} - aggiorno {len(gite)} gite")
 
-    ok_meteo = ok_boll = 0
+    ok_meteo = ok_boll = ok_cond = 0
     regioni_fatte: set[str] = set()
     inizio = time.time()
 
@@ -46,13 +46,28 @@ async def principale(pausa: float = 0.25) -> None:
                     ok_boll += 1
             except Exception as e:
                 print(f"  bollettino {g.eaws_region}: {e}")
+        # punteggi precalcolati: e' questo che rende istantanea la vista Weekend
+        try:
+            ok_cond += await schede.aggiorna_condizioni(db, g)
+        except Exception as e:
+            print(f"  condizioni {g.nome}: {e}")
         await asyncio.sleep(pausa)
         if i % 25 == 0:
             print(f"  {i}/{len(gite)}")
 
+    # le righe vecchie non servono piu' a nessuno
+    from app.models import Condizioni
+
+    vecchie = (
+        db.query(Condizioni)
+        .filter(Condizioni.giorno < dt.date.today())
+        .delete(synchronize_session=False)
+    )
+    db.commit()
     db.close()
     print(f"fatto in {time.time() - inizio:.0f}s - meteo {ok_meteo}, "
-          f"bollettini {ok_boll} su {len(regioni_fatte)} micro-regioni")
+          f"bollettini {ok_boll} su {len(regioni_fatte)} micro-regioni, "
+          f"{ok_cond} punteggi giornalieri ({vecchie} vecchi rimossi)")
 
 
 if __name__ == "__main__":

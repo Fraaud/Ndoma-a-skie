@@ -64,16 +64,28 @@ async def previsioni(
 
 
 def _indice_ora(times: list[str], quando: dt.datetime) -> int:
-    """Indice dell'ora piu' vicina a `quando` nella serie Open-Meteo."""
-    target = quando.strftime("%Y-%m-%dT%H:00")
-    if target in times:
-        return times.index(target)
-    # fallback: la piu' vicina
-    migliori = min(
-        range(len(times)),
-        key=lambda i: abs(dt.datetime.fromisoformat(times[i]) - quando.replace(tzinfo=None)),
-    )
-    return migliori
+    """Indice dell'ora piu' vicina a `quando` nella serie Open-Meteo.
+
+    La serie e' oraria e continua, quindi la posizione si calcola con una
+    sottrazione invece di cercarla. Non e' pignoleria: la scheda gita chiama
+    questa funzione una sessantina di volte, e la ricerca lineare su 240
+    elementi con una conversione di data per confronto costava piu' di tutto
+    il resto della pagina messo insieme.
+    """
+    if not times:
+        raise ValueError("serie oraria vuota")
+    inizio = dt.datetime.fromisoformat(times[0])
+    quando = quando.replace(tzinfo=None)
+    i = round((quando - inizio).total_seconds() / 3600)
+    i = max(0, min(len(times) - 1, i))
+    # verifica: se l'aritmetica non torna (buchi nella serie) si ripiega
+    atteso = quando.strftime("%Y-%m-%dT%H:00")
+    if times[i] == atteso:
+        return i
+    try:
+        return times.index(atteso)
+    except ValueError:
+        return i
 
 
 def finestra(dati: dict, quando: dt.datetime, ore_prima: int) -> dict[str, list]:

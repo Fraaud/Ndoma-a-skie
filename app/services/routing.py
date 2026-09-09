@@ -10,6 +10,7 @@ volta e si tengono in cache per sempre.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 
 import httpx
@@ -69,8 +70,15 @@ async def calcola_percorso(
         km = minuti = None
         geom = {"type": "LineString", "coordinates": coords}
 
-    comuni = indice_comuni().attraversati((c[0], c[1]) for c in coords)
-    istat_list = [str(c["istat"]) for c in comuni if c.get("istat")]
+    # L'intersezione con gli 874 poligoni comunali e' sincrona e pesante:
+    # la prima chiamata carica anche il GeoJSON e costruisce l'indice.
+    # Va in un thread, altrimenti blocca tutto il server per secondi e il
+    # client (o il tunnel) chiude la connessione prima della risposta.
+    def _comuni_del_percorso() -> list[str]:
+        trovati = indice_comuni().attraversati((c[0], c[1]) for c in coords)
+        return [str(x["istat"]) for x in trovati if x.get("istat")]
+
+    istat_list = await asyncio.to_thread(_comuni_del_percorso)
 
     p = Percorso(
         istat_partenza=istat_partenza,

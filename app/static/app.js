@@ -16,14 +16,80 @@ async function api(percorso, opzioni = {}) {
     TG?.initData ? { "X-Telegram-Init-Data": TG.initData } : {},
     opzioni.headers || {}
   );
-  const r = await fetch("/api" + percorso, Object.assign({}, opzioni, { headers }));
+  /* Timeout esplicito: senza, una richiesta persa (segnale che va e viene,
+     tunnel che cade) lascia l'interfaccia a girare per sempre. */
+  const controllo = new AbortController();
+  const scadenza = setTimeout(() => controllo.abort(), opzioni.timeout || 15000);
+  let r;
+  try {
+    r = await fetch("/api" + percorso, Object.assign({}, opzioni, {
+      headers, signal: opzioni.signal || controllo.signal,
+    }));
+  } catch (e) {
+    if (e.name === "AbortError") {
+      const err = new Error("il server non ha risposto entro 15 secondi");
+      err.annullata = true;
+      throw err;
+    }
+    throw new Error("server non raggiungibile (" + e.message + ")");
+  } finally {
+    clearTimeout(scadenza);
+  }
   if (!r.ok) {
-    let msg = r.statusText;
-    try { msg = (await r.json()).detail || msg; } catch (e) {}
-    throw new Error(msg);
+    let msg = "";
+    try { msg = (await r.json()).detail || ""; } catch (e) {}
+    throw new Error(`${r.status} ${msg || r.statusText}`);
   }
   return r.json();
 }
+
+/* Gli errori vanno SEMPRE mostrati nella pagina.
+   TG.showAlert non e' affidabile: su alcune versioni di Telegram non fa
+   nulla e l'utente vede un pulsante che non risponde, senza spiegazione.
+   Lo usiamo solo in aggiunta, mai come unico canale. */
+function avviso(idContenitore, testo, tipo = "errore") {
+  const box = document.getElementById(idContenitore);
+  if (!box) return;
+  const colore = tipo === "ok" ? "" : "grave";
+  box.innerHTML = testo ? `<div class="avviso ${colore}">${esc(testo)}</div>` : "";
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function fuoriDaTelegram() {
+  return !(TG && TG.initData);
+}
+
+/* Ricerca mentre si scrive: aspetta che l'utente si fermi e annulla la
+   richiesta precedente. Senza, ogni lettera fa partire una chiamata e le
+   risposte tornano in ordine sparso, sovrascrivendosi a vicenda. */
+function ricercaLive(input, percorso, disegna, minimo = 2, attesa = 250) {
+  let timer = null;
+  let inCorso = null;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    if (inCorso) { inCorso.abort(); inCorso = null; }
+    const q = input.value.trim();
+    if (q.length < minimo) { disegna(null); return; }
+    timer = setTimeout(async () => {
+      inCorso = new AbortController();
+      try {
+        disegna(await api(percorso(q), { signal: inCorso.signal }));
+      } catch (e) {
+        if (!e.annullata && e.name !== "AbortError") disegna(null, e);
+      } finally {
+        inCorso = null;
+      }
+    }, attesa);
+  });
+}
+
+// gita aperta al momento, per passarla al modulo "ci vai?" senza rileggerla
+let GITA_CORRENTE = null;
+
+const BANNER_BROWSER = `<div class="avviso">
+  Stai guardando dal browser, fuori da Telegram: puoi sfogliare le gite ma
+  <b>non pubblicare</b>, perche' l'app non sa chi sei. Apri il bot su Telegram
+  e usa il bottone "Apri Ndoma a skié".</div>`;
 
 const el = document.getElementById("vista");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
@@ -144,8 +210,8 @@ VISTE.gite = async function () {
   let h = `<div class="wrap"><h1>Catalogo</h1>
     <input id="cerca" placeholder="Cerca una gita o un comune..." autocomplete="off">
     <div style="margin-top:10px">
-      <span class="tag" onclick="filtraValle('')">tutte (${dati.totale})</span>
-      ${valli.map(v => `<span class="tag" onclick="filtraValle('${esc(v.valle)}')">${esc(v.valle)} (${v.gite})</span>`).join("")}
+      <span class="tag" data-valle="">tutte (${dati.totale})</span>
+      ${valli.map(v => `<span class="tag" data-valle="${esc(v.valle)}">${esc(v.valle)} (${v.gite})</span>`).join("")}
     </div>
     <div id="lista" class="sez"></div>
     <button class="secondario" style="width:100%;margin-top:16px" onclick="vai('nuovaGita')">
@@ -153,15 +219,20 @@ VISTE.gite = async function () {
   </div>`;
   el.innerHTML = h;
   disegnaGite(dati.gite);
-  document.getElementById("cerca").addEventListener("input", async (e) => {
-    const d = await api("/gite?limite=200&q=" + encodeURIComponent(e.target.value));
-    disegnaGite(d.gite);
-  });
-};
 
-window.filtraValle = async function (v) {
-  const d = await api("/gite?limite=200&valle=" + encodeURIComponent(v));
-  disegnaGite(d.gite);
+  // i nomi delle valli finiscono in un attributo, non dentro una stringa JS
+  document.querySelectorAll(".tag[data-valle]").forEach(t =>
+    t.addEventListener("click", async () => {
+      const d = await api("/gite?limite=200&valle=" + encodeURIComponent(t.dataset.valle));
+      disegnaGite(d.gite);
+    }));
+
+  const cerca = document.getElementById("cerca");
+  ricercaLive(cerca, q => "/gite?limite=60&q=" + encodeURIComponent(q), async (d, errore) => {
+    if (errore) { disegnaGite([]); return; }
+    if (d) { disegnaGite(d.gite); return; }
+    disegnaGite((await api("/gite?limite=200")).gite);   // campo svuotato
+  });
 };
 
 function disegnaGite(gite) {
@@ -267,11 +338,16 @@ VISTE.gita = async function (arg) {
   }
 
   /* --- azioni --- */
+  // il nome passa per una variabile, non interpolato nell'HTML: gite come
+  // "Punta Colombo da Sant'Anna" romperebbero la stringa JavaScript
+  GITA_CORRENTE = { id: g.id, nome: g.nome };
+  const apri = (t) =>
+    `vai('nuovaUscita',{gita:GITA_CORRENTE.id,nome:GITA_CORRENTE.nome,tipo:'${t}'})`;
   h += `<h2>Ci vai?</h2>
     <div class="scelte">
-      <button onclick="vai('nuovaUscita',{gita:${g.id},tipo:'OFFRO'})">Offro posti</button>
-      <button onclick="vai('nuovaUscita',{gita:${g.id},tipo:'CERCO'})">Cerco passaggio</button>
-      <button onclick="vai('nuovaUscita',{gita:${g.id},tipo:'COMPAGNI'})">Cerco compagnia</button>
+      <button onclick="${apri("OFFRO")}">Offro posti</button>
+      <button onclick="${apri("CERCO")}">Cerco passaggio</button>
+      <button onclick="${apri("COMPAGNI")}">Cerco compagnia</button>
     </div>`;
 
   if (g.fonte_url) {
@@ -328,13 +404,13 @@ VISTE.passaggi = async function () {
 /* ------------------------------------------------------- nuova uscita */
 
 VISTE.nuovaUscita = async function (opz = {}) {
-  const gite = (await api("/gite?limite=300")).gite;
   const oggi = new Date().toISOString().slice(0, 10);
   const tipo = opz.tipo || "OFFRO";
 
   el.innerHTML = `<div class="wrap">
     <button class="torna" onclick="vai('passaggi')">&larr; passaggi</button>
     <h1>Nuova uscita</h1>
+    ${fuoriDaTelegram() ? BANNER_BROWSER : ""}
 
     <label>Cosa fai</label>
     <div class="scelte" id="tipi">
@@ -344,10 +420,11 @@ VISTE.nuovaUscita = async function (opz = {}) {
     </div>
 
     <label>Gita</label>
-    <select id="gita">
-      <option value="">-- non ancora decisa --</option>
-      ${gite.map(g => `<option value="${g.id}">${esc(g.nome)}${g.valle ? " (" + esc(g.valle) + ")" : ""}</option>`).join("")}
-    </select>
+    <input id="cercaGita" placeholder="Scrivi il nome della gita..." autocomplete="off"
+      value="${esc(opz.nome || "")}">
+    <input type="hidden" id="gitaId" value="${opz.gita || ""}">
+    <div id="suggGita" class="suggerimenti" style="display:none"></div>
+    <div id="gitaScelta" class="hint" style="margin-top:6px"></div>
 
     <div id="zonaBox" style="display:none">
       <label>Zona (se la gita non e' decisa)</label>
@@ -382,6 +459,7 @@ VISTE.nuovaUscita = async function (opz = {}) {
     <label>Note</label>
     <textarea id="note" placeholder="Es. rientro entro le 17, ho il portasci, si divide la benzina"></textarea>
 
+    <div id="stato"></div>
     <button class="primario" id="salva">Pubblica</button>
   </div>`;
 
@@ -395,25 +473,48 @@ VISTE.nuovaUscita = async function (opz = {}) {
     b.addEventListener("click", () => { tipoScelto = b.dataset.t; haptic(); aggiornaTipo(); }));
   aggiornaTipo();
 
-  const selGita = document.getElementById("gita");
-  if (opz.gita) selGita.value = String(opz.gita);
+  /* scelta della gita: si cerca invece di scorrere un elenco di 500 voci */
+  const inpGita = document.getElementById("cercaGita");
+  const suggGita = document.getElementById("suggGita");
+  const campoGitaId = document.getElementById("gitaId");
+  const scelta = document.getElementById("gitaScelta");
+
   const aggiornaZona = () => {
-    document.getElementById("zonaBox").style.display = selGita.value ? "none" : "";
+    document.getElementById("zonaBox").style.display = campoGitaId.value ? "none" : "";
+    scelta.textContent = campoGitaId.value
+      ? "Gita scelta. Svuota il campo per lasciarla da decidere."
+      : "Nessuna gita scelta: indica almeno la zona qui sotto.";
   };
-  selGita.addEventListener("change", aggiornaZona);
   aggiornaZona();
+
+  inpGita.addEventListener("input", () => {   // scrivere annulla la scelta
+    campoGitaId.value = "";
+    aggiornaZona();
+  });
+
+  ricercaLive(inpGita, q => "/gite?limite=12&q=" + encodeURIComponent(q), (dati) => {
+    if (!dati || !dati.gite.length) { suggGita.style.display = "none"; return; }
+    suggGita.innerHTML = dati.gite.map(g =>
+      `<div data-id="${g.id}" data-nome="${esc(g.nome)}">${esc(g.nome)}
+        <span class="hint">${esc(g.valle || g.comune || "")}</span></div>`).join("");
+    suggGita.style.display = "";
+    suggGita.querySelectorAll("div[data-id]").forEach(d => d.addEventListener("click", () => {
+      inpGita.value = d.dataset.nome;
+      campoGitaId.value = d.dataset.id;
+      suggGita.style.display = "none";
+      aggiornaZona();
+    }));
+  });
 
   /* autocomplete comuni */
   const inpComune = document.getElementById("comune");
   const sugg = document.getElementById("sugg");
-  inpComune.addEventListener("input", async () => {
-    const q = inpComune.value.trim();
-    if (q.length < 2) { sugg.style.display = "none"; return; }
-    const res = await api("/comuni?q=" + encodeURIComponent(q));
+  ricercaLive(inpComune, q => "/comuni?q=" + encodeURIComponent(q), (res) => {
+    if (!res || !res.length) { sugg.style.display = "none"; return; }
     sugg.innerHTML = res.map(c =>
       `<div data-istat="${c.istat}" data-nome="${esc(c.nome)}">${esc(c.nome)}
         <span class="hint">${esc(c.provincia || "")}</span></div>`).join("");
-    sugg.style.display = res.length ? "" : "none";
+    sugg.style.display = "";
     sugg.querySelectorAll("div[data-istat]").forEach(d => d.addEventListener("click", () => {
       inpComune.value = d.dataset.nome;
       document.getElementById("istat").value = d.dataset.istat;
@@ -421,10 +522,15 @@ VISTE.nuovaUscita = async function (opz = {}) {
     }));
   });
 
-  document.getElementById("salva").addEventListener("click", async () => {
+  const bottone = document.getElementById("salva");
+  bottone.addEventListener("click", async () => {
+    if (fuoriDaTelegram()) {
+      avviso("stato", "Per pubblicare devi aprire l'app da Telegram.");
+      return;
+    }
     const corpo = {
       tipo: tipoScelto,
-      gita_id: selGita.value ? Number(selGita.value) : null,
+      gita_id: campoGitaId.value ? Number(campoGitaId.value) : null,
       zona: document.getElementById("zona")?.value || null,
       data: document.getElementById("data").value,
       flessibilita: Number(document.getElementById("flex").value),
@@ -433,16 +539,26 @@ VISTE.nuovaUscita = async function (opz = {}) {
       posti: Number(document.getElementById("posti")?.value || 1),
       note: document.getElementById("note").value || null,
     };
+    if (!corpo.data) { avviso("stato", "Scegli il giorno."); return; }
+    if (!corpo.gita_id && !corpo.zona) {
+      avviso("stato", "Scegli una gita, oppure scrivi almeno la zona.");
+      return;
+    }
+
+    bottone.disabled = true;
+    bottone.textContent = "Pubblico...";
+    avviso("stato", "");
     try {
-      const res = await api("/uscite", { method: "POST", body: JSON.stringify(corpo) });
+      await api("/uscite", { method: "POST", body: JSON.stringify(corpo) });
       haptic();
-      const n = (res.match || []).length;
-      TG?.showAlert
-        ? TG.showAlert(n ? `Pubblicata. Ho gia' trovato ${n} possibile match!` : "Pubblicata. Ti avviso appena arriva un match.")
-        : alert("Pubblicata.");
+      try { TG?.showAlert?.("Pubblicata. Ti avviso appena arriva un match."); } catch (e) {}
       vai("profilo");
     } catch (e) {
-      TG?.showAlert ? TG.showAlert("Errore: " + e.message) : alert(e.message);
+      // l'errore si vede nella pagina: showAlert su alcune versioni di
+      // Telegram non fa nulla e l'utente resta senza spiegazione
+      avviso("stato", "Non sono riuscito a pubblicare: " + e.message);
+      bottone.disabled = false;
+      bottone.textContent = "Pubblica";
     }
   });
 };
@@ -565,12 +681,11 @@ VISTE.profilo = async function () {
   el.innerHTML = h;
 
   const inp = document.getElementById("comune"), sugg = document.getElementById("sugg");
-  inp.addEventListener("input", async () => {
-    if (inp.value.trim().length < 2) { sugg.style.display = "none"; return; }
-    const res = await api("/comuni?q=" + encodeURIComponent(inp.value.trim()));
+  ricercaLive(inp, q => "/comuni?q=" + encodeURIComponent(q), (res) => {
+    if (!res || !res.length) { sugg.style.display = "none"; return; }
     sugg.innerHTML = res.map(c => `<div data-istat="${c.istat}" data-nome="${esc(c.nome)}">
       ${esc(c.nome)} <span class="hint">${esc(c.provincia || "")}</span></div>`).join("");
-    sugg.style.display = res.length ? "" : "none";
+    sugg.style.display = "";
     sugg.querySelectorAll("div[data-istat]").forEach(d => d.addEventListener("click", () => {
       inp.value = d.dataset.nome;
       document.getElementById("istat").value = d.dataset.istat;

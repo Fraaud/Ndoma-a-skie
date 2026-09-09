@@ -155,6 +155,36 @@ class Comune(Base):
     lon: Mapped[float] = mapped_column(Float)
 
 
+class Condizioni(Base):
+    """Punteggio neve e pericolo valanghe gia' calcolati, per gita e per giorno.
+
+    Esiste per una ragione precisa: la vista Weekend deve poter ordinare
+    centinaia di gite per qualita' della neve in una query, senza rianalizzare
+    a ogni apertura dell'app le serie meteo di tutto il catalogo. Il calcolo
+    lo fa scripts/aggiorna.py di notte; qui restano solo i risultati.
+    """
+
+    __tablename__ = "condizioni"
+    __table_args__ = (UniqueConstraint("gita_id", "giorno", name="uq_condizioni"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gita_id: Mapped[int] = mapped_column(ForeignKey("gite.id"), index=True)
+    giorno: Mapped[dt.date] = mapped_column(Date, index=True)
+
+    punteggio: Mapped[Optional[float]] = mapped_column(Float, index=True)
+    etichetta: Mapped[Optional[str]] = mapped_column(String(40))
+    neve_24h: Mapped[Optional[float]] = mapped_column(Float)
+    neve_72h: Mapped[Optional[float]] = mapped_column(Float)
+    vento_max: Mapped[Optional[int]] = mapped_column(Integer)
+    fattore: Mapped[Optional[str]] = mapped_column(String(200))   # il primo, per la lista
+    avviso: Mapped[Optional[str]] = mapped_column(Text)
+
+    grado_valanghe: Mapped[Optional[int]] = mapped_column(Integer)
+    evidenziatore: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+
+    aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
 class CacheMeteo(Base):
     __tablename__ = "cache_meteo"
     __table_args__ = (UniqueConstraint("gita_id", "giorno", name="uq_meteo"),)
