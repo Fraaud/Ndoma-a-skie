@@ -125,3 +125,33 @@ button.secondario{
   .t-COMPAGNI{background:#2e1638;color:#e0b9f5}
 }
 .match{border-left:3px solid var(--btn);padding-left:10px;margin-top:8px}
+
+/* --- striscia dei giorni: scorre di lato col dito --- */
+.giorni{
+  display:flex;gap:8px;margin:0 -14px 14px;padding:2px 14px 8px;
+  overflow-x:auto;scroll-snap-type:x proximity;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;
+}
+.giorni::-webkit-scrollbar{display:none}
+.giorni button{
+  flex:0 0 auto;scroll-snap-align:center;
+  width:52px;padding:7px 0;border:1px solid var(--bordo);border-radius:12px;
+  background:var(--bg2);color:var(--fg);font:inherit;line-height:1.15;
+  display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;
+}
+.giorni button .gs{font-size:11px;color:var(--hint);text-transform:lowercase}
+.giorni button .gn{font-size:17px;font-weight:600}
+/* sabato e domenica leggermente in evidenza: e' quando si va */
+.giorni button.fine .gs{color:var(--fg)}
+.giorni button.on{background:var(--btn);border-color:var(--btn)}
+.giorni button.on .gs,.giorni button.on .gn{color:var(--btn-fg)}
+
+/* --- esperienza dichiarata --- */
+.esperienza{
+  color:var(--hint);font-size:12.5px;margin-top:5px;
+  border-left:2px solid var(--bordo);padding-left:7px;
+}
+.esperienza.assente{font-style:italic;opacity:.75}
+
+/* hidden deve vincere anche sui blocchi con display proprio */
+[hidden]{display:none!important}

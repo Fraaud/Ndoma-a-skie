@@ -83,6 +83,20 @@ class Utente(Base):
     ha_auto: Mapped[bool] = mapped_column(Boolean, default=False)
     posti_default: Mapped[int] = mapped_column(Integer, default=3)
     notifiche: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Esperienza dichiarata. Tutto facoltativo e tutto auto-dichiarato: non
+    # verifichiamo niente e non blocchiamo nessuno. Serve perche' due persone
+    # che si accordano per un passaggio sappiano con chi stanno salendo in
+    # macchina, invece di scoprirlo al parcheggio. Non dichiarare e' una
+    # risposta anche quella, e si vede.
+    inverni: Mapped[Optional[int]] = mapped_column(Integer)
+    formazione: Mapped[Optional[str]] = mapped_column(String(20))
+    difficolta_abituale: Mapped[Optional[str]] = mapped_column(String(10))
+    # Due domande separate apposta: avere l'ARTVA e saperlo usare non sono la
+    # stessa cosa, e chiederle insieme nasconde proprio il caso peggiore.
+    artva: Mapped[Optional[bool]] = mapped_column(Boolean)
+    artva_prova: Mapped[Optional[str]] = mapped_column(String(20))
+
     creato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import httpx
 from sqlalchemy.orm import Session
 
+from app import esperienza
 from app import telegram_ui as tg_ui
 from app.config import settings
 from app.models import Gita, Match, Uscita, Utente
@@ -49,7 +50,13 @@ def testo_match(db: Session, mia: Uscita, altra: Uscita, motivo: str | None) -> 
         + (f" da {altra.comune_partenza}" if altra.comune_partenza else "")
         + (f", partenza {altra.ora_partenza}" if altra.ora_partenza else "")
         + (f"\n<i>{motivo}</i>" if motivo else "")
-        + "\n\nScrivetevi per accordarvi: l'app non gestisce la prenotazione."
+        # L'esperienza dichiarata sta qui, nel momento in cui si decide se
+        # scrivere a qualcuno. Riportata e basta, senza giudizi: e' cio' che
+        # quella persona ha scritto di se'.
+        + f"\n\n{esperienza.riassunto(altro_autore)}"
+        + "\n\nScrivetevi per accordarvi: l'app non gestisce la prenotazione. "
+          "Un passaggio in auto non e' una cordata: la gita, e con chi farla, "
+          "resta una decisione vostra."
     )
 
 

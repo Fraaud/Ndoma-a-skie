@@ -262,6 +262,40 @@ chilometri in linea d'aria possono essere due valli diverse e novanta
 chilometri di strada. Gite diverse combaciano solo se stessa valle, stesso
 comune, o una sull'itinerario stradale dell'altra. Un test presidia la regola.
 
+### Chi c'e' in macchina
+
+L'app nasce per far viaggiare meno macchine. Il rischio speculare e' che,
+mettendo in contatto sconosciuti, faccia nascere comitive in cui nessuno ha
+mai fatto quel tipo di terreno: in scialpinismo un gruppo senza nessuno che
+sappia cosa fare non e' una gita meno bella, e' una gita in cui un incidente
+diventa grave, perche' non c'e' chi soccorre.
+
+Non filtriamo nessuno. L'esperienza e' **auto-dichiarata** e non verifichiamo
+niente: chi venisse escluso si organizzerebbe lo stesso nella chat del gruppo,
+solo con meno informazioni di adesso. Quello che facciamo e' rendere visibile
+di cosa e' fatto un gruppo **prima** che si formi. Nel profilo (`app/esperienza.py`
+per le etichette, tutte in un posto solo):
+
+| Campo | Perche' |
+|---|---|
+| da quanti inverni | il dato piu' onesto e piu' difficile da gonfiare |
+| corsi | la domanda e' "hai fatto un corso", non "sei bravo" |
+| difficolta' abituale | scala italiana, MS -> OSA |
+| ARTVA, pala e sonda | ce l'hai o no |
+| ultima prova di ricerca | mai / piu' di un anno fa / quest'inverno |
+
+Le ultime due sono separate apposta: avere l'ARTVA e saperlo usare non sono la
+stessa cosa, e chiederle insieme nasconde proprio il caso peggiore. E si chiede
+**quando l'hai provato**, non "sai usarlo?", a cui rispondono di si' tutti.
+
+Il riassunto in una riga compare accanto al nome ovunque si decida di
+contattare qualcuno: nell'elenco Passaggi, nella scheda di un match e nel
+messaggio Telegram di match. Chi non compila niente non sparisce: si legge
+*esperienza non dichiarata*, che e' un'informazione anche quella.
+
+E una cosa scritta dove si legge: **un passaggio in auto non e' una cordata.**
+Chi guida non e' una guida, e ognuno decide la propria gita.
+
 ### Prestazioni
 
 Tre scelte che tengono l'app veloce e che non vanno disfatte:

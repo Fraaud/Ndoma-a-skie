@@ -95,6 +95,23 @@ const el = document.getElementById("vista");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+/* Un campo lasciato vuoto vale null, non stringa vuota: sul server "non
+   dichiarato" e' un'informazione, "" sarebbe una risposta sbagliata. */
+const valore = (id) => (document.getElementById(id)?.value || "") || null;
+const valoreNumero = (id) => {
+  const v = document.getElementById(id)?.value;
+  return v === "" || v === undefined || v === null ? null : Number(v);
+};
+
+/* L'esperienza dichiarata, sotto il nome di chi ha pubblicato. Chi non ha
+   dichiarato niente si vede lo stesso, in grigio: e' un'informazione. */
+function rigaEsperienza(autore) {
+  const t = autore?.esperienza;
+  if (!t) return "";
+  const assente = t === "esperienza non dichiarata";
+  return `<div class="esperienza${assente ? " assente" : ""}">${esc(t)}</div>`;
+}
+
 function dataIt(iso) {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("it-IT", { weekday: "short", day: "2-digit", month: "short" });
@@ -157,20 +174,34 @@ document.querySelectorAll("nav button").forEach(b =>
 
 /* ------------------------------------------------------------ weekend */
 
+/* La striscia dei giorni: scorre di lato col dito.
+   Sette giorni perche' e' quanto lontano guarda il modello meteo, e quanto
+   ne scrive aggiorna.py: oltre non ci sarebbe niente da mostrare. */
+function strisciaGiorni(scelto) {
+  const oggi = new Date(); oggi.setHours(12, 0, 0, 0);
+  let h = `<div class="giorni" id="giorni">`;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(oggi); d.setDate(d.getDate() + i);
+    const iso = d.toISOString().slice(0, 10);
+    const gs = d.getDay();                      // 0 domenica, 6 sabato
+    h += `<button class="${iso === scelto ? "on" : ""}${gs === 0 || gs === 6 ? " fine" : ""}"
+      onclick="vai('weekend','${iso}')">
+      <span class="gs">${["dom", "lun", "mar", "mer", "gio", "ven", "sab"][gs]}</span>
+      <span class="gn">${d.getDate()}</span>
+    </button>`;
+  }
+  return h + `</div>`;
+}
+
 VISTE.weekend = async function (giorno) {
   const g = giorno || prossimoSabato();
-  const dom = new Date(g); dom.setDate(dom.getDate() + 1);
-  const domenica = dom.toISOString().slice(0, 10);
 
   const dati = await api("/weekend?giorno=" + g);
   let h = `<div class="wrap"><h1>Dove ha nevicato</h1>
     <div class="hint" style="margin:-6px 0 12px">Centimetri misurati dal modello
     meteo e grado di pericolo ufficiale. Non e' una classifica di dove convenga
     andare: quella decisione non la fa l'app.</div>
-    <div class="scelte" style="margin-bottom:14px">
-      <button class="${g === prossimoSabato() ? "on" : ""}" onclick="vai('weekend','${prossimoSabato()}')">${dataIt(prossimoSabato())}</button>
-      <button class="${g === domenica ? "on" : ""}" onclick="vai('weekend','${domenica}')">${dataIt(domenica)}</button>
-    </div>`;
+    ${strisciaGiorni(g)}`;
 
   if (!dati.risultati.length) {
     h += `<div class="vuoto">Nessun dato meteo ancora scaricato.<br><br>
@@ -203,6 +234,11 @@ VISTE.weekend = async function (giorno) {
   }
   h += `<div class="disclaimer">${esc(dati.disclaimer || "")}</div></div>`;
   el.innerHTML = h;
+
+  // il giorno scelto puo' essere fuori dallo schermo: lo si porta al centro
+  // senza animazione, altrimenti a ogni cambio la pagina "salta"
+  const attivo = document.querySelector(".giorni button.on");
+  if (attivo) attivo.scrollIntoView({ block: "nearest", inline: "center" });
 };
 
 /* ------------------------------------------------------------ elenco gite */
@@ -395,6 +431,7 @@ VISTE.passaggi = async function () {
             ${u.ora_partenza ? " &middot; " + esc(u.ora_partenza) : ""}
             ${u.tipo === "OFFRO" ? " &middot; " + u.posti + " posti" : ""}</div>
           ${u.note ? `<div class="meta">${esc(u.note)}</div>` : ""}
+          ${rigaEsperienza(u.autore)}
         </div>
         ${u.autore?.username
           ? `<a class="secondario" style="text-decoration:none;white-space:nowrap"
@@ -642,13 +679,29 @@ VISTE.nuovaGita = async function () {
 
 /* ------------------------------------------------------------ profilo */
 
+/* Un menu a tendina costruito dal vocabolario che manda il server: le
+   etichette stanno in app/esperienza.py, in un posto solo. */
+function scelta(id, voci, valore) {
+  const opzioni = Object.entries(voci || {}).map(([k, testo]) =>
+    `<option value="${esc(k)}" ${k === valore ? "selected" : ""}>${esc(testo)}</option>`);
+  return `<select id="${id}">
+    <option value="" ${!valore ? "selected" : ""}>non dichiaro</option>
+    ${opzioni.join("")}</select>`;
+}
+
 VISTE.profilo = async function () {
   PROFILO = await api("/profilo");
+  const VOC = PROFILO.vocabolario || {};
   const mie = await api("/mie");
 
   let h = `<div class="wrap"><h1>Profilo</h1>
     <div class="hint">Le preferenze si salvano una volta: dopo, pubblicare
       un'uscita sono due tap.</div>
+    <div class="card" style="margin:12px 0 18px">
+      <div class="hint">Come ti vedono gli altri</div>
+      <div class="esperienza${PROFILO.esperienza_dichiarata ? "" : " assente"}"
+        style="margin-top:4px">${esc(PROFILO.esperienza)}</div>
+    </div>
     <label>Parto abitualmente da</label>
     <input id="comune" autocomplete="off" value="${esc(PROFILO.comune_partenza || "")}">
     <input type="hidden" id="istat" value="${esc(PROFILO.istat_partenza || "")}">
@@ -665,6 +718,32 @@ VISTE.profilo = async function () {
       <option value="1" ${PROFILO.notifiche ? "selected" : ""}>attive</option>
       <option value="0" ${!PROFILO.notifiche ? "selected" : ""}>disattivate</option>
     </select>
+
+    <h2 style="margin-top:26px">La mia esperienza</h2>
+    <div class="hint">Facoltativo, e nessuno verifica niente. Serve perche' chi
+      sale in macchina con te sappia con chi va, invece di scoprirlo al
+      parcheggio. Se lasci tutto vuoto, sulle tue uscite comparira'
+      &laquo;esperienza non dichiarata&raquo;.</div>
+    <label>Da quanti inverni fai scialpinismo</label>
+    <input type="number" id="inverni" min="0" max="60" placeholder="non dichiaro"
+      value="${PROFILO.inverni ?? ""}">
+    <label>Corsi</label>
+    ${scelta("formazione", VOC.formazione, PROFILO.formazione)}
+    <label>Difficolta' che frequento di solito</label>
+    ${scelta("difficolta_abituale", VOC.difficolta, PROFILO.difficolta_abituale)}
+    <label>ARTVA, pala e sonda</label>
+    <select id="artva">
+      <option value="" ${PROFILO.artva === null || PROFILO.artva === undefined ? "selected" : ""}>non dichiaro</option>
+      <option value="1" ${PROFILO.artva === true ? "selected" : ""}>li ho</option>
+      <option value="0" ${PROFILO.artva === false ? "selected" : ""}>non li ho</option>
+    </select>
+    <div id="blocco-prova">
+      <label>Ultima prova di ricerca con l'ARTVA</label>
+      ${scelta("artva_prova", VOC.artva_prova, PROFILO.artva_prova)}
+      <div class="hint">Avere l'ARTVA e saperlo usare sono due cose diverse:
+        per questo la domanda e' quando l'hai provato, non se lo sai usare.</div>
+    </div>
+
     <button class="primario" id="salva">Salva</button>`;
 
   h += `<h2>Le mie uscite</h2>`;
@@ -677,6 +756,7 @@ VISTE.profilo = async function () {
       ${(u.match || []).map(m => `<div class="match">
         <b>${esc(m.uscita.autore?.nome || "qualcuno")}</b>
         ${m.uscita.autore?.username ? `<a href="https://t.me/${esc(m.uscita.autore.username)}" target="_blank">@${esc(m.uscita.autore.username)}</a>` : ""}
+        ${rigaEsperienza(m.uscita.autore)}
         <span class="badge-tipo t-${m.uscita.tipo}">${m.uscita.tipo}</span>
         <div class="meta">${esc(m.motivo)}</div></div>`).join("")}
       ${u.stato === "aperta" ? `<button class="secondario" style="margin-top:10px"
@@ -685,6 +765,14 @@ VISTE.profilo = async function () {
   }
   h += `</div>`;
   el.innerHTML = h;
+
+  // a chi dichiara di non avere l'ARTVA non si chiede quando l'ha provato:
+  // sarebbe una domanda senza senso, e il server la scarterebbe comunque
+  const selArtva = document.getElementById("artva");
+  const bloccoProva = document.getElementById("blocco-prova");
+  const mostraProva = () => { bloccoProva.hidden = selArtva.value === "0"; };
+  selArtva.addEventListener("change", mostraProva);
+  mostraProva();
 
   const inp = document.getElementById("comune"), sugg = document.getElementById("sugg");
   ricercaLive(inp, q => "/comuni?q=" + encodeURIComponent(q), (res) => {
@@ -708,10 +796,17 @@ VISTE.profilo = async function () {
         ha_auto: document.getElementById("auto").value === "1",
         posti_default: Number(document.getElementById("posti").value),
         notifiche: document.getElementById("notif").value === "1",
+        inverni: valoreNumero("inverni"),
+        formazione: valore("formazione"),
+        difficolta_abituale: valore("difficolta_abituale"),
+        artva: valore("artva") === null ? null : valore("artva") === "1",
+        artva_prova: valore("artva_prova"),
       }),
     });
     haptic();
-    TG?.showAlert ? TG.showAlert("Salvato.") : alert("Salvato.");
+    // si ridisegna: cosi' la riga "come ti vedono gli altri" mostra subito
+    // quello che si e' appena salvato, invece di restare indietro
+    vai("profilo");
   });
 };
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app import esperienza
 from app import notifiche as notifiche_srv
 from app import schede
 from app.auth import utente_corrente
@@ -243,6 +244,14 @@ class Profilo(BaseModel):
     posti_default: int = 3
     notifiche: bool = True
 
+    # tutto facoltativo: chi non risponde resta "esperienza non dichiarata",
+    # che e' un'informazione anche quella
+    inverni: Optional[int] = None
+    formazione: Optional[str] = None
+    difficolta_abituale: Optional[str] = None
+    artva: Optional[bool] = None
+    artva_prova: Optional[str] = None
+
 
 @app.get("/api/profilo")
 def leggi_profilo(u: Utente = Depends(utente_corrente)):
@@ -250,6 +259,16 @@ def leggi_profilo(u: Utente = Depends(utente_corrente)):
         "tg_id": u.tg_id, "username": u.username, "nome": u.nome,
         "comune_partenza": u.comune_partenza, "istat_partenza": u.istat_partenza,
         "ha_auto": u.ha_auto, "posti_default": u.posti_default, "notifiche": u.notifiche,
+        "inverni": u.inverni, "formazione": u.formazione,
+        "difficolta_abituale": u.difficolta_abituale,
+        "artva": u.artva, "artva_prova": u.artva_prova,
+        "esperienza": esperienza.riassunto(u),
+        "esperienza_dichiarata": esperienza.dichiarata(u),
+        "vocabolario": {
+            "formazione": esperienza.FORMAZIONE,
+            "artva_prova": esperienza.ARTVA_PROVA,
+            "difficolta": esperienza.DIFFICOLTA,
+        },
     }
 
 
@@ -262,6 +281,8 @@ def salva_profilo(
     u.ha_auto = p.ha_auto
     u.posti_default = max(0, min(8, p.posti_default))
     u.notifiche = p.notifiche
+    for campo, valore in esperienza.pulisci(p.model_dump()).items():
+        setattr(u, campo, valore)
     if p.istat_partenza:
         c = db.get(Comune, p.istat_partenza)
         if c:
@@ -295,7 +316,11 @@ def _uscita_dict(db: Session, us: Uscita, con_match: bool = False) -> dict:
         "comune_partenza": us.comune_partenza, "posti": us.posti,
         "note": us.note, "stato": us.stato, "zona": us.zona,
         "gita": schede.gita_dict(g) if g else None,
-        "autore": {"nome": a.nome, "username": a.username} if a else None,
+        # l'esperienza viaggia insieme al nome: dev'essere sotto gli occhi
+        # nel momento in cui si decide di scrivere a qualcuno, non in una
+        # scheda che nessuno apre
+        "autore": {"nome": a.nome, "username": a.username,
+                   "esperienza": esperienza.riassunto(a)} if a else None,
     }
     if con_match:
         d["match"] = [
