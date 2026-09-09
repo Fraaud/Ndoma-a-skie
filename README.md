@@ -1,6 +1,23 @@
 # 'NDUMA A SGHIE'
 
 Mini app Telegram per lo scialpinismo del Cuneese e del Mercantour.
+Progetto no-profit, senza pubblicita', costruito su fonti di dati aperte
+con attribuzione.
+
+> ### Avvertenza
+>
+> **Questa applicazione non valuta la sicurezza di un itinerario e non
+> sostituisce il bollettino valanghe ufficiale.**
+>
+> Il grado di pericolo mostrato e' quello emesso dagli enti competenti,
+> semplicemente riportato: non viene calcolato ne' interpretato. Il punteggio
+> sulla qualita' della neve dice **com'e' la neve da sciare**, non se sia
+> prudente andarci: neve fresca abbondante con vento e' contemporaneamente la
+> giornata piu' bella e la situazione in cui si staccano i lastroni.
+>
+> Prima di ogni uscita si legge il bollettino integrale dell'ente emittente.
+> Attrezzatura, preparazione e giudizio sul terreno restano di chi va in
+> montagna.
 
 Due cose in una:
 
@@ -42,8 +59,19 @@ Piemonte), la strada e' scrivere e chiedere. C'e' una bozza di mail pronta in
 
 ## Installazione (Mac, sviluppo locale)
 
+### Strada breve
+
 ```bash
-cd nduma
+bash setup.sh     # ambiente, dipendenze, .env, test, diagnosi delle fonti
+bash avvia.sh     # server web + bot
+```
+
+`setup.sh` si puo' rilanciare quante volte si vuole: salta i passaggi gia'
+fatti. Il resto di questa sezione spiega gli stessi passaggi uno per uno.
+
+### Strada lunga
+
+```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # poi apri .env e compila
@@ -196,6 +224,55 @@ Punteggio (soglia 5):
 
 I percorsi si calcolano una volta per coppia (comune, gita) e restano in
 cache: le combinazioni reali sono poche centinaia.
+
+Una regola importante, presidiata da un test: **il match non usa mai la
+distanza in linea d'aria fra due attacchi.** In montagna dodici chilometri in
+linea d'aria possono essere due valli diverse e novanta chilometri di strada,
+perche' bisogna scendere a fondovalle e risalire. L'unica vicinanza che conta
+e' quella stradale.
+
+---
+
+## Contribuire
+
+Le pull request sono benvenute, soprattutto da chi va in montagna nelle stesse
+valli. Prima di aprirne una:
+
+```bash
+source venv/bin/activate
+python -m pytest -q          # i test girano senza rete, devono passare tutti
+```
+
+Tre cose che non vengono accettate, per come e' pensato il progetto:
+
+1. **Codice che scarica dati da fonti chiuse.** Niente scraping di siti che non
+   rilasciano i contenuti con licenza aperta, nemmeno "solo i dati" o "solo un
+   riassunto": in UE l'estrazione di una parte sostanziale di una banca dati e'
+   protetta di per se', e un riassunto e' comunque un'opera derivata. Se una
+   fonte serve, si scrive e si chiede.
+2. **Qualunque cosa somigli a un giudizio di sicurezza.** Nessun semaforo verde,
+   nessun grado di pericolo calcolato dall'app, nessun "oggi si puo' andare".
+   Il bollettino si riporta.
+3. **Rimozione dell'avviso valanghe** dalle giornate con molta neve fresca e
+   vento, per quanto rovini l'estetica di un punteggio a cinque fiocchi.
+
+Per il resto: codice in italiano per il dominio (gita, uscita, attacco) e in
+inglese per la tecnica, come nel resto del progetto.
+
+## Farlo girare per un'altra valle
+
+Il progetto non ha niente di specifico del Cuneese se non una riga di
+configurazione. Per adattarlo a un'altra zona:
+
+1. cambia `BBOX` nel `.env` con il riquadro della tua zona
+2. in `importers/skitour.py`, aggiorna `MASSICCI_INTERESSANTI` con i massicci
+   di confine che ti interessano (o togli quella fonte se sei lontano dalla
+   Francia)
+3. in `app/config.py`, `eaws_countries` elenca i paesi di cui scaricare le
+   micro-regioni valanghe
+
+Poi `setup_geo.py` e `importa.py` fanno il resto. Se lo attivi per un'altra
+valle, facci sapere: fa piacere.
 
 ---
 
