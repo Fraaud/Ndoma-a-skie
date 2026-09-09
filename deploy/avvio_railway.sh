@@ -8,6 +8,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Attiva il virtual environment se esiste (es. /venv o .venv)
+if [ -d "/venv/bin" ]; then
+    source /venv/bin/activate
+elif [ -d ".venv/bin" ]; then
+    source .venv/bin/activate
+fi
+
 echo "== Ndoma a skie' - avvio =="
 echo "   cartella dati: ${DATA_DIR:-./data}"
 
