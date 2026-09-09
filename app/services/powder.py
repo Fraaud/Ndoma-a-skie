@@ -1,10 +1,14 @@
-"""Powder score: stima della QUALITA' della neve, non della sicurezza.
+"""Powder score: quanto sara' bella la neve DA SCIARE. Nient'altro.
 
-Attenzione, e' il punto piu' delicato del progetto: neve fresca abbondante
-piu' vento e' insieme la giornata piu' bella e la ricetta del lastrone.
-Per questo la funzione restituisce sempre, accanto al punteggio, un campo
-`avviso_valanghe` quando ricorrono quelle condizioni. Non nascondere mai
-quell'avviso nell'interfaccia: chi vede 5 fiocchi deve vedere anche quello.
+Non dice niente, in nessuna forma, sul pericolo di valanghe. Quello lo dice
+solo il bollettino ufficiale, che l'app riporta cosi' com'e' accanto al
+punteggio.
+
+Qui non si aggiungono avvisi, soglie o inferenze nostre sul pericolo: sarebbe
+interpretare un bollettino che non abbiamo scritto, partendo per giunta da
+dati (esposizione, quote) che dalle fonti arrivano spesso incompleti. Se una
+considerazione sulla sicurezza vale la pena di essere fatta, sta gia' nel
+bollettino: si legge quello.
 """
 from __future__ import annotations
 
@@ -29,7 +33,7 @@ def _media(serie: list | None) -> float | None:
 
 
 def calcola(dati_meteo: dict, giorno: dt.date, ora: int = 8) -> dict[str, Any]:
-    """Punteggio 0-5 per la mattina di `giorno`."""
+    """Punteggio 0-5 sulla qualita' della neve, per la mattina di `giorno`."""
     riferimento = dt.datetime.combine(giorno, dt.time(ora, 0))
     f72 = meteo_srv.finestra(dati_meteo, riferimento, 72)
     f24 = meteo_srv.finestra(dati_meteo, riferimento, 24)
@@ -48,7 +52,8 @@ def calcola(dati_meteo: dict, giorno: dt.date, ora: int = 8) -> dict[str, Any]:
             ore_da_neve = len(serie_neve) - 1 - i
             break
 
-    # --- vento: quello che conta e' durante e dopo la nevicata
+    # --- vento: quello che conta e' durante e dopo la nevicata, perche' e' li'
+    #     che rovina la neve buona portandosela via
     inizio_vento = 0 if ore_da_neve is None else max(0, len(serie_neve) - 1 - (ore_da_neve + 24))
     vento_serie = (f72.get("wind_speed_10m") or [])[inizio_vento:]
     vento_quota_serie = (f72.get("wind_speed_700hPa") or [])[inizio_vento:]
@@ -60,11 +65,10 @@ def calcola(dati_meteo: dict, giorno: dt.date, ora: int = 8) -> dict[str, Any]:
     )
 
     # --- pioggia dopo l'ultima neve: uccide tutto
-    pioggia_dopo = 0.0
     if ore_da_neve is not None and ore_da_neve > 0:
         pioggia_dopo = _somma((f72.get("rain") or [])[-ore_da_neve:])
     else:
-        pioggia_dopo = _somma((f24.get("rain") or []))
+        pioggia_dopo = _somma(f24.get("rain") or [])
 
     # ------------------------------------------------------------ punteggio
     punteggio = min(5.0, neve72 / 12.0)  # 60 cm in 72h = 5
@@ -114,19 +118,6 @@ def calcola(dati_meteo: dict, giorno: dt.date, ora: int = 8) -> dict[str, Any]:
 
     punteggio = max(0.0, min(5.0, punteggio))
 
-    # ------------------------------------------------- avviso valanghe onesto
-    avviso = None
-    if neve48 >= 20 and vento_max >= 30:
-        avviso = (
-            "Neve fresca abbondante con vento: sono le condizioni tipiche di formazione "
-            "dei lastroni. Leggi il bollettino valanghe prima di decidere."
-        )
-    elif neve48 >= 30:
-        avviso = (
-            "Nevicata importante nelle ultime 48h: il pericolo valanghe sale sempre "
-            "durante e subito dopo una nevicata."
-        )
-
     return {
         "punteggio": round(punteggio, 1),
         "fiocchi": int(round(punteggio)),
@@ -138,7 +129,6 @@ def calcola(dati_meteo: dict, giorno: dt.date, ora: int = 8) -> dict[str, Any]:
         "ore_da_ultima_neve": ore_da_neve,
         "crosta_da_pioggia": crosta_pioggia,
         "fattori": fattori,
-        "avviso_valanghe": avviso,
     }
 
 

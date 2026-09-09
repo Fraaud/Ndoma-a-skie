@@ -3,7 +3,7 @@
 Mini app Telegram per lo scialpinismo del Cuneese e del Mercantour.
 
 1. **Scheda gita** — per ogni itinerario: meteo, qualita' della neve prevista
-   (*powder score*) e pericolo valanghe ufficiale.
+   e il pericolo valanghe ufficiale, riportati senza interpretazioni.
 2. **Passaggi in auto** — chi offre posti, chi cerca un passaggio, chi cerca
    compagnia. Il match tiene conto dei **comuni che l'auto attraversa**, non
    della distanza in linea d'aria.
@@ -14,10 +14,9 @@ Mini app Telegram per lo scialpinismo del Cuneese e del Mercantour.
 > sostituisce il bollettino valanghe ufficiale.**
 >
 > Il grado di pericolo mostrato e' quello emesso dagli enti competenti,
-> semplicemente riportato: non viene calcolato ne' interpretato. Il punteggio
-> sulla qualita' della neve dice **com'e' la neve da sciare**, non se sia
-> prudente andarci: neve fresca abbondante con vento e' contemporaneamente la
-> giornata piu' bella e la situazione in cui si staccano i lastroni.
+> semplicemente riportato: non viene calcolato ne' interpretato. Della neve
+> l'app dice solo **quanta ne e' caduta**, un dato misurato, e ricorda che i
+> giorni dopo una nevicata sono quelli a pericolo piu' alto.
 >
 > Prima di ogni uscita si legge il bollettino integrale dell'ente emittente.
 
@@ -92,77 +91,67 @@ Stato del sistema: <http://localhost:8000/api/salute>
 
 ---
 
-## Deploy
+## Deploy su Railway
 
-Serve una macchina piccola (1 vCPU, 1 GB) con un dominio. Il database e'
-SQLite: niente servizi esterni da gestire.
+Railway costruisce dal repository: a ogni `git push` ridistribuisce da solo.
 
-**1. Codice e ambiente**
+**Un vincolo decide l'architettura**: su Railway un volume si monta su un
+solo servizio, e il database e' un file SQLite su quel volume. Quindi server
+web e bot girano **nello stesso servizio** (`deploy/avvio_railway.sh` li avvia
+entrambi) e l'aggiornamento notturno lo fa il bot invece di un cron separato.
+Niente Postgres, niente servizi aggiuntivi.
+
+**1. Crea il progetto** su railway.app: *New Project* -> *Deploy from GitHub
+repo* -> questo repository. `railway.json` gli dice gia' come avviarlo.
+
+**2. Aggiungi il volume**, in *Settings -> Volumes*, con punto di mount
+`/data`. E' l'unica cosa che sopravvive ai riavvii: senza, a ogni deploy
+perdi database, catalogo e utenti.
+
+**3. Variabili d'ambiente**, in *Variables*:
+
+```
+TELEGRAM_BOT_TOKEN=quello di BotFather
+DATA_DIR=/data
+DATABASE_URL=sqlite:////data/ndoma.db      # quattro barre: percorso assoluto
+AGGIORNA_DAL_BOT=1                          # aggiornamento notturno alle 4:00
+BBOX=6.55,44.00,7.95,44.75
+HTTP_USER_AGENT=ndoma-a-skie/1.0 (contatto: tua@email.it)
+WEBAPP_URL=                                 # si compila al passo 4
+```
+
+**4. Genera il dominio**, in *Settings -> Networking -> Generate Domain*.
+Copia l'indirizzo `https://...up.railway.app` in `WEBAPP_URL` e ridistribuisci:
+il bot scrive quell'indirizzo dentro il bottone che apre la mini app, quindi
+finche' e' vuoto il bottone non funziona.
+
+**5. Popola il catalogo**, una volta sola, dalla shell del servizio:
 
 ```bash
-git clone <repo> /opt/ndoma && cd /opt/ndoma
-python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
-cp .env.example .env          # compila, con WEBAPP_URL = https://tuo.dominio
-./venv/bin/python scripts/setup_geo.py
-./venv/bin/python scripts/importa.py
+python scripts/importa.py
+python scripts/aggiorna.py
 ```
 
-**2. Due servizi systemd**, uno per il web e uno per il bot:
+I confini comunali e le micro-regioni valanghe se li scarica da solo al primo
+avvio: sono dati derivati e non stanno nel repository.
 
-```ini
-# /etc/systemd/system/ndoma-web.service
-[Unit]
-Description=Ndoma a skie - web
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/ndoma
-ExecStart=/opt/ndoma/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
-Restart=always
-User=ndoma
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Lo stesso file per il bot, con
-`ExecStart=/opt/ndoma/venv/bin/python -m app.bot`.
+**6. Backup.** Il database e' un file solo, ma con WAL attivo non si copia con
+`cp`:
 
 ```bash
-systemctl enable --now ndoma-web ndoma-bot
+sqlite3 /data/ndoma.db ".backup '/data/backup.db'"
 ```
 
-**3. HTTPS.** Caddy fa da reverse proxy e prende il certificato da solo:
+Poi scaricalo dalla shell di Railway. Vale la pena farlo prima di ogni
+modifica importante allo schema.
 
-```
-tuo.dominio {
-    reverse_proxy 127.0.0.1:8000
-}
-```
+### Se un domani servisse separare i servizi
 
-**4. Aggiornamento notturno.** Va in cron, altrimenti la vista Weekend resta
-ferma ai punteggi vecchi:
-
-```
-0 4 * * *  cd /opt/ndoma && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
-```
-
-**5. Backup.** Il database e' un file solo; con WAL attivo va copiato con il
-comando di SQLite, non con `cp`:
-
-```
-30 4 * * *  sqlite3 /opt/ndoma/data/ndoma.db ".backup '/opt/backup/ndoma-$(date +\%u).db'"
-```
-
-**6. Aggiornare il codice**
-
-```bash
-git pull && ./venv/bin/pip install -r requirements.txt
-systemctl restart ndoma-web ndoma-bot
-```
-
-Non serve altro: niente Redis, niente Postgres, niente code. Con qualche
-decina di utenti questa configurazione sta larga.
+Con molti piu' utenti, web e bot possono stare su servizi distinti: in quel
+caso il database deve diventare Postgres (Railway lo offre come componente),
+perche' due servizi non possono condividere lo stesso volume. Cambia solo
+`DATABASE_URL` e si aggiunge `psycopg[binary]` alle dipendenze: il codice usa
+SQLAlchemy e non ha query specifiche di SQLite.
 
 ---
 
@@ -170,40 +159,66 @@ decina di utenti questa configurazione sta larga.
 
 ```
 app/
-  main.py       API FastAPI + serve la mini app
-  bot.py        bot Telegram: /start, promemoria del giovedi', notifiche
-  models.py     Gita, Utente, Uscita, Match, Percorso, Comune, Condizioni, cache
-  auth.py       verifica HMAC dell'initData Telegram (unico punto di sicurezza)
-  geo.py        indici spaziali: comune di un punto, comuni attraversati
-  schede.py     composizione scheda gita e calcolo dei punteggi
-  services/     meteo, powder, valanghe, routing, match
-  static/       mini app (html + css + un solo js)
-importers/      camptocamp, skitour, osm
-scripts/        check_fonti, setup_geo, importa, aggiorna, seed_demo
+  main.py          API FastAPI + serve la mini app
+  bot.py           bot Telegram: comandi, notifiche, lavori periodici
+  notifiche.py     invio dei match e recupero di quelli non riusciti
+  telegram_ui.py   menzioni e bottoni (funzionano anche senza username)
+  aggiornamento.py meteo, bollettini e punteggi: lo stesso codice per cron e bot
+  models.py        Gita, Utente, Uscita, Match, Percorso, Comune, Condizioni
+  auth.py          verifica HMAC dell'initData Telegram (unico punto di sicurezza)
+  geo.py           indici spaziali: comune di un punto, comuni attraversati
+  schede.py        composizione della scheda gita
+  services/        meteo, neve, valanghe, routing, match
+  static/          mini app (html + css + un solo js)
+importers/         camptocamp, skitour, osm
+scripts/           check_fonti, setup_geo, importa, aggiorna,
+                   prova_match, prova_inverno, seed_demo
+deploy/            avvio_railway.sh
 ```
 
-### Il powder score
+Gli script di diagnosi valgono i due minuti che costa impararli:
+`check_fonti.py` dice quali sorgenti esterne rispondono, `prova_match.py`
+dice perche' un match non e' scattato, `prova_inverno.py` carica una giornata
+d'inverno vera per provare l'app fuori stagione.
 
-Combina, sulle 72 ore prima della partenza: neve fresca a 24/48/72h alla quota
-dell'attacco, vento durante e dopo la nevicata, temperatura durante la
-nevicata come proxy della densita', ore dall'ultima nevicata, e un veto se e'
-piovuto dopo la neve. Restituisce 0-5 con i fattori in chiaro.
+### La neve caduta
 
-Restituisce anche `avviso_valanghe`: neve fresca abbondante piu' vento e' la
-giornata migliore e la ricetta del lastrone allo stesso tempo, e l'app lo dice
-invece di mostrare cinque fiocchi e tacere. **Quell'avviso non va tolto
-dall'interfaccia.**
+L'app riporta **quanti centimetri sono caduti nelle ultime 72 ore** alla quota
+dell'attacco, quanti nelle ultime 24, e quante ore sono passate dall'ultima
+nevicata. Sono quantita' misurate dal modello meteo, riportate come si
+riporterebbe una temperatura.
+
+**Non si calcola nessun punteggio di qualita' della neve.** C'era, andava da 0
+a 5 e pesava vento, temperatura e crosta: e' stato tolto. Un indice inventato
+da noi finisce per essere letto come un giudizio, e ordinare le gite per
+"quanto sara' bella" spinge verso le giornate con piu' neve fresca, che sono
+anche quelle con il pericolo piu' alto. Il fatto si riporta, il giudizio no.
+
+**Quando c'e' neve fresca, l'avvertenza accompagna sempre il dato**: i giorni
+dopo una nevicata sono quelli in cui il pericolo di valanghe e' piu' alto, la
+neve non si e' assestata e il vento puo' averla accumulata in lastroni. E'
+un richiamo generale, quello che sta in apertura di qualunque manuale, non una
+valutazione dell'itinerario. Un test fallisce se sparisce.
 
 ### Il bollettino valanghe
 
+**L'app riporta il bollettino ufficiale. Non lo interpreta, in nessuna forma.**
+
 Regole in `app/services/valanghe.py`, non negoziabili:
 
-1. Nessun grado di pericolo calcolato da noi: solo quello ufficiale EAWS.
+1. Nessun grado di pericolo calcolato da noi: solo quello emesso dall'ente.
 2. Nessun semaforo verde, nessun "si puo' andare".
-3. Sempre visibili ente emittente, ora di emissione e link al bollettino integrale.
-4. L'*evidenziatore* incrocia esposizione e quota della gita con quelle del
-   problema segnalato: dice "questa gita ci passa dentro, leggi il bollettino",
-   non se sia sicura.
+3. Nessun incrocio fra il bollettino e i dati della gita. In particolare
+   **nessuna evidenziazione di quali problemi "riguardano" un itinerario**:
+   scegliere cosa mettere in risalto e' gia' interpretare, e implica che il
+   resto non ti riguardi. Per giunta l'esposizione delle gite arriva dalle
+   fonti spesso incompleta, quindi quel filtro sarebbe anche inaffidabile.
+4. Sempre visibili: ente emittente, ora di emissione, tutti i problemi
+   segnalati con esposizioni e quote, link al bollettino integrale.
+
+Centimetri e grado ufficiale stanno **accanto** nella lista, senza che l'app
+dica come metterli in relazione: quel giudizio e' di chi va in montagna, sul
+bollettino integrale e sul terreno.
 
 ### Il match
 

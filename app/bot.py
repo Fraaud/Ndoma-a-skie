@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
 from telegram.constants import ParseMode
@@ -22,7 +23,13 @@ from app.config import settings
 from app.db import init_db, session_scope
 from app.models import Gita, Uscita, Utente
 
-logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(asctime)s  %(message)s", level=logging.INFO,
+                    datefmt="%H:%M:%S")
+# Le librerie parlano inglese e a raffica: httpx stampa una riga a ogni
+# interrogazione di Telegram, cioe' ogni dieci secondi. Restano visibili solo
+# i loro errori veri.
+for rumorosa in ("httpx", "httpcore", "telegram.ext.Updater", "apscheduler"):
+    logging.getLogger(rumorosa).setLevel(logging.WARNING)
 log = logging.getLogger("ndoma")
 
 
@@ -147,6 +154,28 @@ async def _ciclo_recupero_notifiche(intervallo: int = 120) -> None:
         await asyncio.sleep(intervallo)
 
 
+async def aggiornamento_notturno(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Meteo, bollettini e punteggi, una volta al giorno.
+
+    Serve dove non si puo' mettere un cron separato: su Railway il volume del
+    database sta su un solo servizio, quindi l'aggiornamento deve girare qui.
+    Su un server tradizionale si usa scripts/aggiorna.py da cron, e questo
+    lavoro semplicemente rifa' un lavoro gia' fatto senza danno.
+    """
+    from app.aggiornamento import aggiorna_tutto
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        c = await aggiorna_tutto(db, verboso=False)
+        log.info("aggiornamento notturno: %s gite, %s punteggi, %ss",
+                 c["gite"], c["punteggi"], c["secondi"])
+    except Exception as e:
+        log.warning("aggiornamento notturno fallito: %s", e)
+    finally:
+        db.close()
+
+
 async def _post_init(app: Application) -> None:
     # il bottone permanente accanto al campo di testo: e' il modo piu' comodo
     # per riaprire l'app senza cercare il messaggio di /start
@@ -154,7 +183,7 @@ async def _post_init(app: Application) -> None:
         menu_button=MenuButtonWebApp(text="Apri app", web_app=WebAppInfo(url=settings.webapp_url))
     )
     app.create_task(_ciclo_recupero_notifiche())
-    log.info("recupero notifiche attivo (ogni 2 minuti)")
+    log.info("recupero notifiche attivo, ogni 2 minuti")
 
 
 def main() -> None:
@@ -169,12 +198,15 @@ def main() -> None:
     if app.job_queue:
         # giovedi' alle 19:00 (ora del server)
         app.job_queue.run_daily(promemoria_settimanale, time=dt.time(19, 0), days=(3,))
+        if os.getenv("AGGIORNA_DAL_BOT", "").lower() in ("1", "true", "si"):
+            app.job_queue.run_daily(aggiornamento_notturno, time=dt.time(4, 0))
+            log.info("aggiornamento notturno attivo, ogni giorno alle 4:00")
     else:
         log.warning(
             "CODA DEI LAVORI ASSENTE: il promemoria del giovedi' non partira'. "
             "Installa le dipendenze aggiornate:  pip install -r requirements.txt"
         )
-    log.info("bot avviato")
+    log.info("bot in ascolto")
     app.run_polling()
 
 

@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Su Railway (o ovunque ci sia un volume) si punta la cartella dati altrove:
+# e' l'unico posto che deve sopravvivere ai riavvii.
+DATA_DIR = os.getenv("DATA_DIR") or os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
@@ -74,10 +76,15 @@ class Settings:
     # ogni insieme e' piccolo e si scorre tutto.
     # Per trovare l'id di un'altra area:
     #   https://api.camptocamp.org/search?q=NOME&t=a
+    # Conviene mescolare confini amministrativi e catene montuose: un itinerario
+    # a cavallo del confine puo' non essere associato alla provincia ma esserlo
+    # al massiccio, e viceversa.
     camptocamp_aree = [
-        280000,  # Provincia di Cuneo      (~400 itinerari di scialpinismo)
-        14360,   # Alpes-Maritimes         (~320, versante Mercantour)
-        14362,   # Alpes-de-Haute-Provence (Ubaye, alta Tinee)
+        280000,  # Provincia di Cuneo         (admin, ~400 itinerari)
+        14360,   # Alpes-Maritimes            (admin, ~320)
+        14362,   # Alpes-de-Haute-Provence    (admin: Ubaye, alta Tinee)
+        14466,   # Mercantour - Argentera     (massiccio, entrambi i versanti)
+        14432,   # Alpi Cozie - Queyras N     (massiccio: Maira, Varaita, Po)
     ]
 
 

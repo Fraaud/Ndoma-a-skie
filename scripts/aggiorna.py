@@ -1,73 +1,37 @@
-"""Aggiornamento notturno di meteo e bollettini.
+"""Aggiornamento notturno di meteo, bollettini e punteggi.
 
 Le API esterne si chiamano UNA VOLTA PER GITA, di notte, non a ogni apertura
 dell'app: il venerdi' sera si collegano tutti insieme e con 200 gite si
 sforerebbero i limiti gratuiti in pochi minuti.
 
-Da mettere in cron (esempio, ogni notte alle 4):
+    python scripts/aggiorna.py
+
+Da mettere in cron su un server tradizionale:
   0 4 * * *  cd /percorso/ndoma-a-skie && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
+
+Su Railway non serve: il bot lo fa da solo ogni notte (vedi app/bot.py).
+Il lavoro vero sta in app/aggiornamento.py, cosi' i due percorsi eseguono
+esattamente lo stesso codice.
 """
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import schede  # noqa: E402
+from app.aggiornamento import aggiorna_tutto  # noqa: E402
 from app.db import SessionLocal, init_db  # noqa: E402
-from app.models import Gita  # noqa: E402
 
 
-async def principale(pausa: float = 0.25) -> None:
+async def principale() -> None:
     init_db()
     db = SessionLocal()
-    gite = db.query(Gita).filter(Gita.attiva.is_(True)).all()
-    print(f"{dt.datetime.now():%Y-%m-%d %H:%M} - aggiorno {len(gite)} gite")
-
-    ok_meteo = ok_boll = ok_cond = 0
-    regioni_fatte: set[str] = set()
-    inizio = time.time()
-
-    for i, g in enumerate(gite, 1):
-        try:
-            if await schede.meteo_gita(db, g, forza=True):
-                ok_meteo += 1
-        except Exception as e:
-            print(f"  meteo {g.nome}: {e}")
-        # il bollettino e' per micro-regione, non per gita: uno solo per regione
-        if g.eaws_region and g.eaws_region not in regioni_fatte:
-            regioni_fatte.add(g.eaws_region)
-            try:
-                if await schede.bollettino_gita(db, g, forza=True):
-                    ok_boll += 1
-            except Exception as e:
-                print(f"  bollettino {g.eaws_region}: {e}")
-        # punteggi precalcolati: e' questo che rende istantanea la vista Weekend
-        try:
-            ok_cond += await schede.aggiorna_condizioni(db, g)
-        except Exception as e:
-            print(f"  condizioni {g.nome}: {e}")
-        await asyncio.sleep(pausa)
-        if i % 25 == 0:
-            print(f"  {i}/{len(gite)}")
-
-    # le righe vecchie non servono piu' a nessuno
-    from app.models import Condizioni
-
-    vecchie = (
-        db.query(Condizioni)
-        .filter(Condizioni.giorno < dt.date.today())
-        .delete(synchronize_session=False)
-    )
-    db.commit()
-    db.close()
-    print(f"fatto in {time.time() - inizio:.0f}s - meteo {ok_meteo}, "
-          f"bollettini {ok_boll} su {len(regioni_fatte)} micro-regioni, "
-          f"{ok_cond} punteggi giornalieri ({vecchie} vecchi rimossi)")
+    try:
+        await aggiorna_tutto(db)
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Composizione della scheda gita: meteo + powder + bollettino, con cache.
+"""Composizione della scheda gita: meteo, neve caduta, bollettino. Con cache.
 
 Le API esterne si chiamano una volta per gita e per giorno, non a ogni
 apertura dell'app: il venerdi' sera si collegano tutti insieme.
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import CacheBollettino, CacheMeteo, Condizioni, Gita
 from app.services import meteo as meteo_srv
-from app.services import powder as powder_srv
+from app.services import neve as neve_srv
 from app.services import valanghe as val_srv
 
 TTL_METEO = dt.timedelta(hours=6)
@@ -83,7 +83,7 @@ async def bollettino_gita(db: Session, gita: Gita, forza: bool = False) -> dict 
 
 
 async def aggiorna_condizioni(db: Session, gita: Gita, giorni: int = 7) -> int:
-    """Calcola e salva punteggio neve e pericolo per i prossimi `giorni`.
+    """Salva neve caduta e grado ufficiale per i prossimi `giorni`.
 
     Da chiamare da scripts/aggiorna.py, mai da una richiesta web.
     """
@@ -91,29 +91,24 @@ async def aggiorna_condizioni(db: Session, gita: Gita, giorni: int = 7) -> int:
     if not dati_meteo:
         return 0
     boll = await bollettino_gita(db, gita)
-    evidenze = val_srv.evidenzia(gita, boll) if boll else []
     grado = (boll or {}).get("grado_massimo")
 
     oggi = dt.date.today()
     scritte = 0
     for i in range(giorni):
         giorno = oggi + dt.timedelta(days=i)
-        p = powder_srv.calcola(dati_meteo, giorno)
-        if p.get("punteggio") is None:
+        n = neve_srv.nevicato(dati_meteo, giorno)
+        if not n.get("disponibile"):
             continue
         riga = db.query(Condizioni).filter_by(gita_id=gita.id, giorno=giorno).one_or_none()
         if riga is None:
             riga = Condizioni(gita_id=gita.id, giorno=giorno)
             db.add(riga)
-        riga.punteggio = p["punteggio"]
-        riga.etichetta = powder_srv.etichetta(p["punteggio"])
-        riga.neve_24h = p.get("neve_24h_cm")
-        riga.neve_72h = p.get("neve_72h_cm")
-        riga.vento_max = p.get("vento_max_kmh")
-        riga.fattore = (p.get("fattori") or [None])[0]
-        riga.avviso = p.get("avviso_valanghe")
+        riga.neve_24h = n["neve_24h_cm"]
+        riga.neve_72h = n["neve_72h_cm"]
+        riga.ore_da_ultima_neve = n["ore_da_ultima_neve"]
+        riga.descrizione = n["descrizione"]
         riga.grado_valanghe = grado
-        riga.evidenziatore = evidenze
         riga.aggiornato_il = dt.datetime.now(dt.timezone.utc)
         scritte += 1
     db.commit()
@@ -139,16 +134,15 @@ async def scheda(db: Session, gita: Gita, giorno: dt.date | None = None) -> dict
     out = {"gita": gita_dict(gita), "giorno": giorno.isoformat()}
     if dati_meteo:
         out["meteo"] = meteo_srv.sintesi_giorno(dati_meteo, giorno)
-        p = powder_srv.calcola(dati_meteo, giorno)
-        p["etichetta"] = powder_srv.etichetta(p.get("punteggio"))
-        out["powder"] = p
+        out["neve"] = neve_srv.nevicato(dati_meteo, giorno)
         out["previsione_giorni"] = [
             meteo_srv.sintesi_giorno(dati_meteo, giorno + dt.timedelta(days=i)) for i in range(0, 6)
         ]
     if boll:
+        # il bollettino intero, come e' stato scritto: nessun filtro, nessuna
+        # evidenziazione di quali problemi riguarderebbero questa gita
         out["valanghe"] = {
             **boll,
-            "evidenziatore": val_srv.evidenzia(gita, boll),
             "link_ufficiale": val_srv.link_bollettino_ufficiale(gita.paese, gita.eaws_region),
         }
     else:

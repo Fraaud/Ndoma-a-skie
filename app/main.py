@@ -23,6 +23,7 @@ from app.db import get_db, init_db
 from app.geo import comune_di, distanza_km
 from app.models import Comune, Condizioni, Gita, Match, Uscita, Utente
 from app.services import match as match_srv
+from app.services import neve as neve_srv
 from app.services import routing as routing_srv
 from app.services import valanghe as val_srv
 
@@ -167,10 +168,11 @@ async def weekend(
     limite: int = Query(12, le=40),
     db: Session = Depends(get_db),
 ):
-    """Le gite del catalogo ordinate per qualita' della neve prevista.
+    """Dove ha nevicato, con accanto il grado di pericolo ufficiale.
 
-    E' la funzione che rende l'app utile anche con zero utenti: si legge
-    volentieri il giovedi' sera, e chi la legge poi trova i passaggi.
+    Non e' una classifica delle gite migliori: e' l'elenco di dove e' caduta
+    neve, un dato misurato. Il giudizio su dove convenga andare non lo da'
+    l'app.
     """
     d = dt.date.fromisoformat(giorno) if giorno else _prossimo_sabato()
 
@@ -180,28 +182,26 @@ async def weekend(
         db.query(Condizioni, Gita)
         .join(Gita, Gita.id == Condizioni.gita_id)
         .filter(Condizioni.giorno == d, Gita.attiva.is_(True))
-        .order_by(Condizioni.punteggio.desc())
+        .order_by(Condizioni.neve_72h.desc())
         .limit(limite)
         .all()
     )
     risultati = [{
         "gita": schede.gita_dict(g),
-        "powder": {
-            "punteggio": c.punteggio,
-            "etichetta": c.etichetta,
+        "neve": {
+            "ha_nevicato": (c.neve_72h or 0) >= 1.0,
             "neve_24h_cm": c.neve_24h,
             "neve_72h_cm": c.neve_72h,
-            "vento_max_kmh": c.vento_max,
-            "fattori": [c.fattore] if c.fattore else [],
-            "avviso_valanghe": c.avviso,
+            "ore_da_ultima_neve": c.ore_da_ultima_neve,
+            "descrizione": c.descrizione,
         },
         "valanghe_grado": c.grado_valanghe,
-        "evidenziatore": c.evidenziatore or [],
     } for c, g in righe]
 
     return {
         "giorno": d.isoformat(),
         "risultati": risultati,
+        "avvertenza_neve": neve_srv.AVVERTENZA_NEVE_FRESCA,
         "disclaimer": val_srv.DISCLAIMER,
         "suggerimento": None if risultati else
             "Nessun punteggio per questo giorno: lancia scripts/aggiorna.py",

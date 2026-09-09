@@ -163,7 +163,10 @@ VISTE.weekend = async function (giorno) {
   const domenica = dom.toISOString().slice(0, 10);
 
   const dati = await api("/weekend?giorno=" + g);
-  let h = `<div class="wrap"><h1>Weekend</h1>
+  let h = `<div class="wrap"><h1>Dove ha nevicato</h1>
+    <div class="hint" style="margin:-6px 0 12px">Centimetri misurati dal modello
+    meteo e grado di pericolo ufficiale. Non e' una classifica di dove convenga
+    andare: quella decisione non la fa l'app.</div>
     <div class="scelte" style="margin-bottom:14px">
       <button class="${g === prossimoSabato() ? "on" : ""}" onclick="vai('weekend','${prossimoSabato()}')">${dataIt(prossimoSabato())}</button>
       <button class="${g === domenica ? "on" : ""}" onclick="vai('weekend','${domenica}')">${dataIt(domenica)}</button>
@@ -186,17 +189,17 @@ VISTE.weekend = async function (giorno) {
             ${r.gita.difficolta ? " &middot; " + esc(r.gita.difficolta) : ""}</div>
         </div>
         <div class="center">
-          <div class="fiocchi">${fiocchi(r.powder.punteggio)}</div>
+          <div class="neve-cm">${r.neve.ha_nevicato ? Math.round(r.neve.neve_72h_cm) + " cm" : "&mdash;"}</div>
+          <div class="hint" style="font-size:10.5px">72h</div>
           ${gr ? `<div class="grado" style="justify-content:center;margin-top:6px">
             <span class="pallino g${gr}"></span>${gr}</div>` : ""}
         </div>
       </div>
-      <div class="meta" style="margin-top:7px">${esc(r.powder.fattori[0] || "")}</div>
-      ${r.evidenziatore?.length
-        ? `<div class="meta" style="color:#c26a00;margin-top:4px">&#9888;
-           ${esc(r.evidenziatore[0].problema)}: ${esc(r.evidenziatore[0].testo)}</div>`
-        : ""}
+      <div class="meta" style="margin-top:7px">${esc(r.neve.descrizione || "")}</div>
     </div>`;
+  }
+  if (dati.risultati.some(r => r.neve.ha_nevicato)) {
+    h += `<div class="avviso grave">${esc(dati.avvertenza_neve || "")}</div>`;
   }
   h += `<div class="disclaimer">${esc(dati.disclaimer || "")}</div></div>`;
   el.innerHTML = h;
@@ -254,7 +257,7 @@ VISTE.gita = async function (arg) {
   const id = typeof arg === "object" ? arg.id : arg;
   const giorno = (typeof arg === "object" && arg.giorno) ? arg.giorno : null;
   const s = await api("/gite/" + id + (giorno ? "?giorno=" + giorno : ""));
-  const g = s.gita, p = s.powder, v = s.valanghe || {}, m = s.meteo || {};
+  const g = s.gita, n = s.neve || {}, v = s.valanghe || {}, m = s.meteo || {};
 
   /* selettore del giorno: la qualita' della neve cambia da un giorno all'altro,
      quindi la scheda deve poter essere letta per il giorno in cui si va */
@@ -285,18 +288,19 @@ VISTE.gita = async function (arg) {
     </div>`;
 
   /* --- neve --- */
-  if (p && p.punteggio !== null && p.punteggio !== undefined) {
-    h += `<h2>Qualita' della neve</h2>
+  if (n.disponibile) {
+    h += `<h2>Neve caduta</h2>
     <div class="powder-box">
       <div class="riga">
-        <div><div class="powder-num">${p.punteggio}</div>
-          <div class="hint">${esc(p.etichetta)}</div></div>
-        <div class="fiocchi" style="font-size:19px">${fiocchi(p.punteggio)}</div>
+        <div>
+          <div class="powder-num">${n.ha_nevicato ? Math.round(n.neve_72h_cm) + " cm" : "niente"}</div>
+          <div class="hint">${n.ha_nevicato ? "nelle ultime 72 ore" : "nelle ultime 72 ore"}</div>
+        </div>
       </div>
-      <ul class="fattori">${p.fattori.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+      <div class="meta" style="margin-top:8px">${esc(n.descrizione || "")}</div>
     </div>`;
-    if (p.avviso_valanghe) {
-      h += `<div class="avviso grave"><b>Attenzione</b><br>${esc(p.avviso_valanghe)}</div>`;
+    if (n.avvertenza) {
+      h += `<div class="avviso grave">${esc(n.avvertenza)}</div>`;
     }
   }
 
@@ -312,18 +316,20 @@ VISTE.gita = async function (arg) {
     h += `<div class="card">
       <div class="grado"><span class="pallino g${gr || 0}"></span>
         Grado ${gr || "-"} ${esc((v.gradi?.[0]?.testo) || "")}</div>
-      ${v.problemi?.length ? `<div style="margin-top:9px">${v.problemi.map(pr =>
-        `<span class="tag">${esc(pr.tipo_it)}${pr.esposizioni.length ? " " + pr.esposizioni.join("-") : ""}${pr.quota_min ? " >" + pr.quota_min + "m" : ""}</span>`).join("")}</div>` : ""}
+      ${v.problemi?.length ? `<div style="margin-top:9px">
+        <div class="hint" style="margin-bottom:4px">Problemi segnalati dal bollettino:</div>
+        ${v.problemi.map(pr => `<div class="meta" style="margin:3px 0">&bull;
+          <b>${esc(pr.tipo_it)}</b>${pr.esposizioni.length ? " &mdash; esposizioni " + pr.esposizioni.join("-") : ""}${pr.quota_min ? ", sopra " + pr.quota_min + " m" : ""}${pr.quota_max ? ", sotto " + pr.quota_max + " m" : ""}</div>`).join("")}
+      </div>` : ""}
       ${v.sintesi ? `<div class="meta" style="margin-top:9px">${esc(v.sintesi)}</div>` : ""}
       <div class="hint" style="margin-top:9px;font-size:11.5px">
         ${v.ente ? esc(v.ente) + " &middot; " : ""}${v.emesso_il ? "emesso " + esc(String(v.emesso_il).slice(0, 16).replace("T", " ")) : ""}</div>
       <a href="${v.link_ufficiale}" target="_blank"
         style="display:inline-block;margin-top:8px">Bollettino integrale &rarr;</a>
     </div>`;
-    for (const e of (v.evidenziatore || [])) {
-      h += `<div class="avviso"><b>${esc(e.problema)}</b>, ${esc(e.testo)}.<br>
-        Questa gita rientra in quelle condizioni: leggi il bollettino integrale.</div>`;
-    }
+    h += `<div class="avviso">Questo e' un estratto. <b>Il bollettino va letto
+      per intero prima di uscire</b>: l'app non dice quali problemi riguardino
+      questa gita, e non e' in grado di dirlo.</div>`;
   }
 
   /* --- previsione --- */

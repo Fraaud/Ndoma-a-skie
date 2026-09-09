@@ -1,12 +1,13 @@
-"""Bollettino valanghe: RIPORTIAMO, NON VALUTIAMO.
+"""Bollettino valanghe: SI RIPORTA E BASTA.
 
 Regole di prodotto, non negoziabili:
   1. Nessun grado di pericolo calcolato da noi. Solo quello ufficiale EAWS.
   2. Nessun semaforo verde, nessun "si puo' andare". Mai.
   3. Sempre visibili: ente emittente, ora di emissione, link al bollettino integrale.
-  4. L'evidenziatore incrocia due dati oggettivi (esposizione/quota della gita
-     contro esposizione/quota del problema segnalato). E' un evidenziatore,
-     non un giudizio di sicurezza.
+  4. Nessun incrocio fra il bollettino e i dati della gita. Nessuna
+     evidenziazione di quali problemi "ti riguardano": scegliere cosa mettere
+     in risalto e' gia' interpretare, e implica che il resto non ti riguardi.
+     Il bollettino si mostra intero, nell'ordine in cui e' stato scritto.
 
 Fonti:
   - micro-regioni EAWS: regions.avalanches.org (GeoJSON)
@@ -192,58 +193,6 @@ def normalizza(b: dict, fonte_url: str | None = None) -> dict:
                 if isinstance(b.get("source"), dict) else None,
         "fonte_url": fonte_url,
     }
-
-
-# --------------------------------------------------------- evidenziatore
-
-
-def _range_si_sovrappone(a_min, a_max, b_min, b_max) -> bool:
-    a_min = a_min if a_min is not None else -9999
-    a_max = a_max if a_max is not None else 9999
-    b_min = b_min if b_min is not None else -9999
-    b_max = b_max if b_max is not None else 9999
-    return a_min <= b_max and b_min <= a_max
-
-
-def evidenzia(gita: Any, bollettino: dict | None) -> list[dict]:
-    """Incrocia esposizione e fascia di quota della gita con i problemi segnalati.
-
-    NON dice se la gita e' sicura. Dice: "il bollettino parla di questo, e la
-    tua gita ci passa dentro". La decisione resta a chi va, sul bollettino
-    integrale e sul terreno.
-    """
-    if not bollettino:
-        return []
-    esp_gita = normalizza_esposizioni(getattr(gita, "esposizione", None))
-    q_min = getattr(gita, "quota_min", None)
-    q_max = getattr(gita, "quota_max", None)
-
-    avvisi = []
-    for p in bollettino.get("problemi", []):
-        if p["tipo"] == "favourable_situation":
-            continue
-        quota_ok = _range_si_sovrappone(q_min, q_max, p["quota_min"], p["quota_max"])
-        esp_comuni = [e for e in esp_gita if e in p["esposizioni"]] if p["esposizioni"] else []
-        # se non conosciamo l'esposizione della gita, non filtriamo: meglio
-        # mostrare in piu' che in meno.
-        esp_ok = bool(esp_comuni) or not esp_gita or not p["esposizioni"]
-        if quota_ok and esp_ok:
-            # `testo` contiene solo i dettagli: il nome del problema sta gia'
-            # nel campo `problema` e l'interfaccia lo mostra separatamente.
-            pezzi = []
-            if p["esposizioni"]:
-                pezzi.append("esposizioni " + "-".join(p["esposizioni"]))
-            if p["quota_min"]:
-                pezzi.append(f"sopra {p['quota_min']} m")
-            if p["quota_max"]:
-                pezzi.append(f"sotto {p['quota_max']} m")
-            avvisi.append({
-                "problema": p["tipo_it"],
-                "testo": ", ".join(pezzi) if pezzi else "su tutte le esposizioni e quote",
-                "esposizioni_in_comune": esp_comuni,
-                "rilevanza": "alta" if esp_comuni else "possibile",
-            })
-    return avvisi
 
 
 def link_bollettino_ufficiale(paese: str = "IT", regione_eaws: str | None = None) -> str:

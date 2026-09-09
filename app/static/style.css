@@ -50,7 +50,7 @@ nav button.on{color:var(--link);font-weight:600}
 }
 
 /* --- powder --- */
-.fiocchi{font-size:15px;letter-spacing:1px;white-space:nowrap}
+.neve-cm{font-size:17px;font-weight:700;white-space:nowrap;color:#2b8ac6}
 .powder-box{background:var(--bg2);border-radius:var(--radius);padding:14px}
 .powder-num{font-size:30px;font-weight:700;line-height:1}
 .fattori{margin:10px 0 0;padding-left:18px}

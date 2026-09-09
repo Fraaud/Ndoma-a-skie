@@ -14,7 +14,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 import pytest  # noqa: E402
 
 from app.auth import verifica_init_data  # noqa: E402
-from app.services import powder, valanghe  # noqa: E402
+from app.services import neve, valanghe  # noqa: E402
 
 
 # --------------------------------------------------------------- helper
@@ -44,52 +44,51 @@ def meteo_finto(ore: int = 120, nevicata=None, vento=5.0, temp=-5.0, pioggia=Non
     }
 
 
-# --------------------------------------------------------------- powder
+# ----------------------------------------------------------------- neve
 
-def test_niente_neve_punteggio_zero():
-    p = powder.calcola(meteo_finto(), dt.date.today())
-    assert p["punteggio"] == 0.0
-    assert p["ore_da_ultima_neve"] is None
-
-
-def test_nevicata_fredda_senza_vento_e_powder():
-    nevicata = {i: 3.0 for i in range(10, 24)}  # ~42 cm fra 24 e 10 ore fa
-    p = powder.calcola(meteo_finto(nevicata=nevicata, vento=8, temp=-8), dt.date.today())
-    assert p["punteggio"] >= 3.5
-    assert p["neve_72h_cm"] > 35
-    assert powder.etichetta(p["punteggio"]) in ("powder", "molto buona")
+def test_niente_neve():
+    n = neve.nevicato(meteo_finto(), dt.date.today())
+    assert n["ha_nevicato"] is False
+    assert n["neve_72h_cm"] == 0.0
+    assert n["avvertenza"] is None
+    assert "nessuna nevicata" in n["descrizione"]
 
 
-def test_il_vento_forte_abbassa_il_punteggio():
+def test_riporta_i_centimetri_caduti():
+    nevicata = {i: 3.0 for i in range(10, 24)}          # ~42 cm fra 24 e 10 ore fa
+    n = neve.nevicato(meteo_finto(nevicata=nevicata), dt.date.today())
+    assert n["ha_nevicato"] is True
+    assert 40 <= n["neve_72h_cm"] <= 45
+    assert n["ore_da_ultima_neve"] == 10
+    assert "cm nelle ultime 72 ore" in n["descrizione"]
+
+
+def test_con_neve_fresca_l_avvertenza_c_e_sempre():
+    """Regola non negoziabile: se ha nevicato, l'avvertenza accompagna il dato.
+    E' un richiamo generale, non un giudizio sull'itinerario."""
     nevicata = {i: 3.0 for i in range(10, 24)}
-    calmo = powder.calcola(meteo_finto(nevicata=nevicata, vento=8), dt.date.today())
-    ventoso = powder.calcola(meteo_finto(nevicata=nevicata, vento=70), dt.date.today())
-    assert ventoso["punteggio"] < calmo["punteggio"]
+    n = neve.nevicato(meteo_finto(nevicata=nevicata), dt.date.today())
+    assert n["avvertenza"]
+    assert "bollettino" in n["avvertenza"].lower()
 
 
-def test_neve_e_vento_generano_avviso_valanghe():
-    """Il punto piu' importante di tutto il file: tanta neve piu' vento deve
-    SEMPRE produrre l'avviso, anche (soprattutto) se il powder score e' alto."""
+def test_nessun_punteggio_e_nessun_giudizio():
+    """Non si calcola nessun indice nostro: solo quantita' misurate.
+    Se qualcuno rimette un punteggio o un'etichetta di qualita', qui fallisce."""
     nevicata = {i: 3.0 for i in range(10, 24)}
-    p = powder.calcola(meteo_finto(nevicata=nevicata, vento=45), dt.date.today())
-    assert p["avviso_valanghe"] is not None
-    assert "bollettino" in p["avviso_valanghe"].lower()
+    n = neve.nevicato(meteo_finto(nevicata=nevicata, vento=70), dt.date.today())
+    for proibito in ("punteggio", "etichetta", "fiocchi", "qualita"):
+        assert not any(proibito in k for k in n), f"non deve esserci '{proibito}'"
+    assert not hasattr(neve, "calcola")
 
 
-def test_pioggia_dopo_la_neve_fa_crosta():
-    nevicata = {i: 4.0 for i in range(40, 60)}
-    pioggia = {i: 1.5 for i in range(5, 20)}
-    p = powder.calcola(meteo_finto(nevicata=nevicata, pioggia=pioggia, temp=-1),
-                       dt.date.today())
-    assert p["crosta_da_pioggia"] is True
-    assert p["punteggio"] <= 1.0
-
-
-def test_neve_umida_penalizzata():
+def test_il_vento_non_cambia_i_centimetri():
+    """Il vento non entra piu' nel dato: e' un'informazione meteo, non una
+    correzione nostra della neve caduta."""
     nevicata = {i: 3.0 for i in range(10, 24)}
-    fredda = powder.calcola(meteo_finto(nevicata=nevicata, temp=-8), dt.date.today())
-    umida = powder.calcola(meteo_finto(nevicata=nevicata, temp=1), dt.date.today())
-    assert umida["punteggio"] < fredda["punteggio"]
+    calmo = neve.nevicato(meteo_finto(nevicata=nevicata, vento=5), dt.date.today())
+    ventoso = neve.nevicato(meteo_finto(nevicata=nevicata, vento=70), dt.date.today())
+    assert calmo["neve_72h_cm"] == ventoso["neve_72h_cm"]
 
 
 # ------------------------------------------------------------- valanghe
@@ -118,28 +117,10 @@ def test_parsing_caaml():
     assert b["problemi"][0]["esposizioni"] == ["N", "NE", "E"]
 
 
-class GitaFinta:
-    def __init__(self, esposizione, quota_min, quota_max):
-        self.esposizione, self.quota_min, self.quota_max = esposizione, quota_min, quota_max
-
-
-def test_evidenziatore_intercetta_la_gita_esposta():
-    b = valanghe.normalizza({
-        "regions": [{"regionID": "X"}],
-        "dangerRatings": [{"mainValue": "considerable"}],
-        "avalancheProblems": [{"problemType": "wind_slab", "aspects": ["N", "NE"],
-                               "elevation": {"lowerBound": "2200"}}],
-    })
-    esposta = valanghe.evidenzia(GitaFinta("N,NE", 1600, 2900), b)
-    assert esposta and esposta[0]["rilevanza"] == "alta"
-
-    # gita interamente sotto la quota del problema: nessun avviso
-    bassa = valanghe.evidenzia(GitaFinta("S", 900, 1500), b)
-    assert bassa == []
-
-
-def test_evidenziatore_senza_bollettino():
-    assert valanghe.evidenzia(GitaFinta("N", 1000, 2000), None) == []
+def test_normalizza_esposizioni_niente_giudizi():
+    """Di valanghe restano solo lettura e normalizzazione del bollettino:
+    nessuna funzione che incroci il bollettino con i dati della gita."""
+    assert not hasattr(valanghe, "evidenzia")
 
 
 # ----------------------------------------------------------------- auth

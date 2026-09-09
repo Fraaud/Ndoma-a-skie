@@ -156,12 +156,12 @@ class Comune(Base):
 
 
 class Condizioni(Base):
-    """Punteggio neve e pericolo valanghe gia' calcolati, per gita e per giorno.
+    """Neve caduta e grado di pericolo ufficiale, per gita e per giorno.
 
-    Esiste per una ragione precisa: la vista Weekend deve poter ordinare
-    centinaia di gite per qualita' della neve in una query, senza rianalizzare
-    a ogni apertura dell'app le serie meteo di tutto il catalogo. Il calcolo
-    lo fa scripts/aggiorna.py di notte; qui restano solo i risultati.
+    Sono due dati riportati, non elaborati: i centimetri li misura il modello
+    meteo, il grado lo emette l'ente competente. Stanno in tabella perche' la
+    vista Weekend possa leggerli in una query invece di rianalizzare le serie
+    meteo di tutto il catalogo a ogni apertura. Li scrive aggiorna.py di notte.
     """
 
     __tablename__ = "condizioni"
@@ -171,16 +171,14 @@ class Condizioni(Base):
     gita_id: Mapped[int] = mapped_column(ForeignKey("gite.id"), index=True)
     giorno: Mapped[dt.date] = mapped_column(Date, index=True)
 
-    punteggio: Mapped[Optional[float]] = mapped_column(Float, index=True)
-    etichetta: Mapped[Optional[str]] = mapped_column(String(40))
     neve_24h: Mapped[Optional[float]] = mapped_column(Float)
-    neve_72h: Mapped[Optional[float]] = mapped_column(Float)
-    vento_max: Mapped[Optional[int]] = mapped_column(Integer)
-    fattore: Mapped[Optional[str]] = mapped_column(String(200))   # il primo, per la lista
-    avviso: Mapped[Optional[str]] = mapped_column(Text)
+    neve_72h: Mapped[Optional[float]] = mapped_column(Float, index=True)
+    ore_da_ultima_neve: Mapped[Optional[int]] = mapped_column(Integer)
+    descrizione: Mapped[Optional[str]] = mapped_column(String(200))
 
+    # grado ufficiale EAWS, riportato tale e quale. Nient'altro sul pericolo:
+    # niente nostre elaborazioni, niente evidenziazioni di cosa "ti riguarda".
     grado_valanghe: Mapped[Optional[int]] = mapped_column(Integer)
-    evidenziatore: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
     aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 

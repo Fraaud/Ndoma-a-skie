@@ -34,21 +34,21 @@ def db_pieno():
         s.add(g)
         s.flush()
         s.add(Condizioni(
-            gita_id=g.id, giorno=SABATO, punteggio=i / 10.0,
-            etichetta="prova", grado_valanghe=3, fattore=f"{i} cm in 72h",
-            avviso="neve fresca e vento" if i > 25 else None,
+            gita_id=g.id, giorno=SABATO, neve_72h=float(i), neve_24h=i / 3.0,
+            ore_da_ultima_neve=6, grado_valanghe=3,
+            descrizione=f"{i} cm nelle ultime 72 ore",
         ))
     s.commit()
     yield s
     s.close()
 
 
-def test_weekend_ordina_per_punteggio(db_pieno):
+def test_weekend_ordina_per_neve_caduta(db_pieno):
     with TestClient(app) as c:
         d = c.get(f"/api/weekend?giorno={SABATO.isoformat()}").json()
-    punteggi = [r["powder"]["punteggio"] for r in d["risultati"]]
-    assert punteggi == sorted(punteggi, reverse=True)
-    assert punteggi[0] == 2.9
+    cm = [r["neve"]["neve_72h_cm"] for r in d["risultati"]]
+    assert cm == sorted(cm, reverse=True)
+    assert cm[0] == 29.0
 
 
 def test_weekend_rispetta_il_limite(db_pieno):
@@ -57,12 +57,15 @@ def test_weekend_rispetta_il_limite(db_pieno):
     assert len(d["risultati"]) == 5
 
 
-def test_weekend_porta_avviso_e_disclaimer(db_pieno):
-    """L'avviso valanghe e il disclaimer non devono mai sparire dalla risposta."""
+def test_weekend_porta_grado_avvertenza_e_disclaimer(db_pieno):
+    """Accanto ai centimetri devono esserci sempre il grado ufficiale,
+    l'avvertenza sulla neve fresca e il disclaimer."""
     with TestClient(app) as c:
         d = c.get(f"/api/weekend?giorno={SABATO.isoformat()}&limite=3").json()
-    assert d["disclaimer"]
-    assert any(r["powder"]["avviso_valanghe"] for r in d["risultati"])
+    assert d["disclaimer"] and d["avvertenza_neve"]
+    assert "bollettino" in d["avvertenza_neve"].lower()
+    assert all(r["valanghe_grado"] == 3 for r in d["risultati"])
+    assert all("punteggio" not in r["neve"] for r in d["risultati"])
 
 
 def test_weekend_senza_dati_suggerisce_cosa_fare(db_pieno):
