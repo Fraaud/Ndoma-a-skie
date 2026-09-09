@@ -17,13 +17,16 @@ env/
 .coverage
 htmlcov/
 
-# --- dati generati: si riscaricano con gli script ---
+# --- dati generati ---
 data/*.db
-data/*.db-journal
-data/*.geojson
+data/*.db-shm
+data/*.db-wal
 data/*.log
 *.log
 nohup.out
+# i due GeoJSON ritagliati (3 MB in tutto) restano invece nel repository: al
+# primo avvio su Railway rigenerarli vorrebbe dire scaricare e analizzare un
+# file nazionale da un centinaio di MB, rischiando di esaurire la memoria
 
 # --- editor e sistema ---
 .vscode/

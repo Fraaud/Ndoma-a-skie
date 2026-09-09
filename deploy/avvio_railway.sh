@@ -11,10 +11,19 @@ cd "$(dirname "$0")/.."
 echo "== Ndoma a skie' - avvio =="
 echo "   cartella dati: ${DATA_DIR:-./data}"
 
-# I file geografici stanno sul volume e vanno scaricati la prima volta.
-# Sono derivati, non codice: non stanno nel repository.
-if [ ! -f "${DATA_DIR:-./data}/comuni.geojson" ]; then
-  echo "   confini comunali e micro-regioni valanghe assenti: li scarico"
+# I file geografici viaggiano nel repository gia' ritagliati (3 MB): al primo
+# avvio si copiano sul volume. Rigenerarli qui vorrebbe dire scaricare e
+# analizzare un GeoJSON nazionale da un centinaio di MB, e su un container
+# piccolo si rischia di esaurire la memoria proprio al primo deploy.
+DATI="${DATA_DIR:-./data}"
+for f in comuni.geojson eaws_micro_regions.geojson; do
+  if [ ! -f "$DATI/$f" ] && [ -f "data/$f" ]; then
+    echo "   copio $f sul volume"
+    cp "data/$f" "$DATI/$f"
+  fi
+done
+if [ ! -f "$DATI/comuni.geojson" ]; then
+  echo "   file geografici assenti anche nel repository: provo a scaricarli"
   python scripts/setup_geo.py || echo "   ATTENZIONE: preparazione dati non riuscita"
 fi
 
