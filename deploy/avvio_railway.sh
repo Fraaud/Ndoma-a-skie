@@ -43,32 +43,57 @@ db = SessionLocal(); print(db.query(Comune).count()); db.close()
   python scripts/setup_geo.py --solo-archivio || echo "   ATTENZIONE: elenco comuni non scritto"
 fi
 
-# Quante gite ci sono gia' in archivio. Se il database non esiste ancora,
-# init_db lo crea vuoto e la risposta e' zero.
-gite=$(python - <<'PY' 2>/dev/null || echo 0
+# Due controlli separati, non uno solo. Il catalogo e le condizioni meteo si
+# riempiono con due comandi diversi, e ognuno puo' fallire per conto suo: la
+# prima volta l'import si e' fermato a meta' e aggiorna.py, che veniva dopo,
+# non e' mai partito - risultato, una vista Weekend vuota senza spiegazione.
+# Chiedendo a ognuno se il SUO lavoro e' fatto, un avvio successivo rimedia
+# da solo a quello che manca.
+conta() {
+  python - "$1" 2>/dev/null <<'CONTA' || echo 0
+import sys, datetime as dt
 from app.db import SessionLocal, init_db
-from app.models import Gita
+from app.models import Gita, Condizioni
 init_db()
 db = SessionLocal()
-print(db.query(Gita).count())
+if sys.argv[1] == "gite":
+    print(db.query(Gita).count())
+else:
+    print(db.query(Condizioni).filter(Condizioni.giorno >= dt.date.today()).count())
 db.close()
-PY
-)
-echo "   catalogo: ${gite:-0} itinerari"
+CONTA
+}
 
-# Primo avvio: si importa il catalogo e si scaricano meteo e bollettini.
+gite=$(conta gite)
+condizioni=$(conta condizioni)
+echo "   catalogo: ${gite:-0} itinerari, ${condizioni:-0} giornate di condizioni"
+
+# Il catalogo si importa una volta sola. La soglia non e' zero: se un
+# tentativo si interrompe a meta' (rete, memoria, un deploy che riparte) il
+# riavvio successivo lo rifa' invece di restare con mezzo catalogo per
+# sempre. Reimportare non duplica niente: ogni itinerario si riconosce da
+# fonte + identificativo.
+lavoro=""
+if [ "${gite:-0}" -lt 300 ]; then
+  echo "   catalogo incompleto: importo in sottofondo"
+  lavoro="python scripts/importa.py"
+fi
+
+# Meteo e bollettini si rifanno comunque ogni notte: qui servono solo se non
+# c'e' proprio niente, cioe' al primo avvio o dopo un import interrotto.
+if [ "${condizioni:-0}" -eq 0 ]; then
+  echo "   nessuna condizione in archivio: scarico meteo e bollettini"
+  lavoro="${lavoro:+$lavoro && }python scripts/aggiorna.py"
+fi
+
 # In sottofondo, perche' ci vogliono minuti e Railway considera fallito un
-# deploy che non apre la porta subito. Il log finisce sul volume, cosi' lo si
+# deploy che non apre subito la porta. Il log sta sul volume, cosi' lo si
 # rilegge dalla shell anche dopo:   tail -f $DATA_DIR/primo_avvio.log
-# La soglia non e' zero ma cinquanta: se un primo tentativo si e' interrotto
-# a meta' (rete, memoria) il riavvio successivo lo rifa' invece di restare
-# con mezzo catalogo per sempre. Importare due volte non duplica nulla:
-# gli itinerari si riconoscono dalla sorgente e dal loro identificativo.
-if [ "${gite:-0}" -lt 50 ]; then
-  echo "   catalogo da riempire: importo in sottofondo (qualche minuto)"
+if [ -n "$lavoro" ]; then
   (
-    python scripts/importa.py && python scripts/aggiorna.py
-    echo "== primo avvio completato =="
+    echo "== avvio del $(date) =="
+    eval "$lavoro"
+    echo "== finito, esito $? =="
   ) >> "$DATI/primo_avvio.log" 2>&1 &
 fi
 
