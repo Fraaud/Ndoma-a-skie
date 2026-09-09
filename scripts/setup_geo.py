@@ -68,11 +68,31 @@ def comuni() -> int:
     with open(settings.comuni_geojson, "w", encoding="utf-8") as f:
         json.dump(ritagliato, f)
     print(f"  comuni tenuti: {len(ritagliato['features'])}")
+    n = popola_comuni(ritagliato)
+    print(f"  comuni in database: {n}")
+    return n
+
+
+def popola_comuni(gj: dict | None = None) -> int:
+    """Scrive in archivio l'elenco dei comuni, leggendolo dal file ritagliato.
+
+    Sta separata dallo scaricamento perche' i due strati geografici viaggiano
+    gia' pronti nel repository: chi installa da li' (Railway) ha il file ma
+    non le righe in archivio, e senza quelle non funziona la ricerca del
+    comune di partenza - cioe' il campo che apre tutta la pubblicazione di
+    un'uscita. Era un buco silenzioso: l'app partiva benissimo e l'elenco
+    dei paesi restava vuoto.
+    """
+    if gj is None:
+        if not os.path.exists(settings.comuni_geojson):
+            return 0
+        with open(settings.comuni_geojson, encoding="utf-8") as f:
+            gj = json.load(f)
 
     init_db()
     n = 0
     with session_scope() as db:
-        for feat in ritagliato["features"]:
+        for feat in gj.get("features", []):
             p = feat.get("properties", {})
             istat = str(p.get("com_istat_code") or p.get("com_istat_code_num")
                         or p.get("pro_com_t") or p.get("PRO_COM_T") or "").strip()
@@ -92,7 +112,6 @@ def comuni() -> int:
                 lat=centro.y, lon=centro.x,
             ))
             n += 1
-    print(f"  comuni in database: {n}")
     return n
 
 
@@ -123,6 +142,12 @@ def micro_regioni_eaws() -> int:
 
 
 if __name__ == "__main__":
+    if "--solo-archivio" in sys.argv:
+        # I file ci sono gia' (arrivano dal repository): serve solo riempire
+        # la tabella dei comuni.  E' quello che fa l'avvio su Railway.
+        print(f"Comuni scritti in archivio: {popola_comuni()}")
+        raise SystemExit(0)
+
     print("Confini comunali")
     comuni()
     print("\nMicro-regioni valanghe EAWS")

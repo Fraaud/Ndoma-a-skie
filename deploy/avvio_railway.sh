@@ -29,6 +29,20 @@ if [ ! -f "$DATI/comuni.geojson" ]; then
   python scripts/setup_geo.py || echo "   ATTENZIONE: preparazione dati non riuscita"
 fi
 
+# L'elenco dei comuni sta in archivio, non nel file: il geojson serve alla
+# geometria (che paesi attraversa un percorso), le righe servono alla ricerca
+# del comune di partenza. Copiare il file non basta, vanno scritte anche
+# quelle, se non ci sono gia'. Sono pochi secondi.
+if [ "$(python -c "
+from app.db import SessionLocal, init_db
+from app.models import Comune
+init_db()
+db = SessionLocal(); print(db.query(Comune).count()); db.close()
+" 2>/dev/null || echo 0)" -lt 100 ]; then
+  echo "   scrivo l'elenco dei comuni in archivio"
+  python scripts/setup_geo.py --solo-archivio || echo "   ATTENZIONE: elenco comuni non scritto"
+fi
+
 # Quante gite ci sono gia' in archivio. Se il database non esiste ancora,
 # init_db lo crea vuoto e la risposta e' zero.
 gite=$(python - <<'PY' 2>/dev/null || echo 0

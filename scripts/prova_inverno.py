@@ -52,13 +52,33 @@ def prossimo_sabato() -> dt.date:
 # ------------------------------------------------------------------ meteo
 
 
+def controlla_data(giorno: dt.date) -> None:
+    """L'archivio contiene solo il passato, e con qualche giorno di ritardo."""
+    oggi = dt.date.today()
+    if giorno >= oggi:
+        raise SystemExit(
+            f"\n{giorno} non e' un giorno passato.\n"
+            "L'archivio meteo conserva solo cio' che e' gia' accaduto: qui\n"
+            "serve una giornata d'inverno vera da rigiocare sul prossimo\n"
+            "weekend, non una data futura.\n\n"
+            f"  python scripts/prova_inverno.py --data 2026-02-14\n"
+        )
+    if (oggi - giorno).days < 6:
+        print(f"  attenzione: {giorno} e' molto recente e i dati di rianalisi\n"
+              f"  arrivano con qualche giorno di ritardo, potrebbero mancare\n")
+    if giorno.month in (5, 6, 7, 8, 9, 10):
+        print(f"  attenzione: {giorno} non e' un giorno d'inverno, "
+              f"di neve non ne troverai\n")
+
+
 async def meteo_storico(c: httpx.AsyncClient, lat: float, lon: float,
                         giorno: dt.date, quota: int | None) -> dict | None:
     """Serie oraria reale attorno a `giorno` (4 giorni prima, 2 dopo)."""
+    fine = min(giorno + dt.timedelta(days=2), dt.date.today() - dt.timedelta(days=1))
     params = {
         "latitude": round(lat, 4), "longitude": round(lon, 4),
         "start_date": (giorno - dt.timedelta(days=4)).isoformat(),
-        "end_date": (giorno + dt.timedelta(days=2)).isoformat(),
+        "end_date": fine.isoformat(),
         "hourly": ORARIE, "timezone": "Europe/Rome",
     }
     if quota:
@@ -193,9 +213,19 @@ async def principale(giorno: dt.date, tutte: bool, raggio: float) -> None:
                 print(f"    {i}/{len(gite)}")
 
     print(f"\n3) Risultato: {fatte} gite con dati reali del {giorno}\n")
+    if not fatte:
+        print("  Nessun dato caricato: guarda gli errori del punto 2.")
+        print("  Se dicono 'out of allowed range', la data non e' passata.")
+        db.close()
+        return
+
+    # SOLO le gite di questa simulazione: leggere tutta la tabella mostrerebbe
+    # i punteggi rimasti dall'aggiornamento precedente, facendo credere che
+    # sia stato caricato qualcosa
+    ids = [g.id for g in gite]
     migliori = (
         db.query(Condizioni, Gita).join(Gita, Gita.id == Condizioni.gita_id)
-        .filter(Condizioni.giorno == sabato)
+        .filter(Condizioni.giorno == sabato, Condizioni.gita_id.in_(ids))
         .order_by(Condizioni.punteggio.desc()).limit(10).all()
     )
     for c_, g in migliori:
@@ -203,8 +233,6 @@ async def principale(giorno: dt.date, tutte: bool, raggio: float) -> None:
               f"  {(c_.fattore or '')[:38]}")
         if c_.avviso:
             print(f"        ! {c_.avviso[:80]}")
-    if not migliori:
-        print("  nessun punteggio: guarda gli errori sopra")
 
     print("\nApri l'app: la vista Weekend mostra questi dati.")
     print("Ricorda: sono REALI ma di un altro giorno. Quando hai finito:")
@@ -226,7 +254,8 @@ def pulisci() -> None:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Prova l'app con una giornata d'inverno vera")
-    p.add_argument("--data", default="2026-02-14", help="giorno d'inverno da simulare")
+    p.add_argument("--data", default="2026-02-14",
+                   help="giorno d'inverno GIA' PASSATO da rigiocare (default 2026-02-14)")
     p.add_argument("--tutte", action="store_true", help="tutto il catalogo, non solo Limone")
     p.add_argument("--raggio", type=float, default=15.0, help="km attorno a Limone")
     p.add_argument("--pulisci", action="store_true", help="rimuove la simulazione")
@@ -235,4 +264,6 @@ if __name__ == "__main__":
     if a.pulisci:
         pulisci()
     else:
-        asyncio.run(principale(dt.date.fromisoformat(a.data), a.tutte, a.raggio))
+        giorno = dt.date.fromisoformat(a.data)
+        controlla_data(giorno)
+        asyncio.run(principale(giorno, a.tutte, a.raggio))
