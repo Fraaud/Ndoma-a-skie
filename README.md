@@ -102,38 +102,61 @@ entrambi) e l'aggiornamento notturno lo fa il bot invece di un cron separato.
 Niente Postgres, niente servizi aggiuntivi.
 
 **1. Crea il progetto** su railway.app: *New Project* -> *Deploy from GitHub
-repo* -> questo repository. `railway.json` gli dice gia' come avviarlo.
+repo* -> questo repository. C'e' un `Dockerfile`: Railway lo usa e basta,
+non serve configurare niente. L'immagine installa le dipendenze di sistema
+(niente virtualenv), cosi' `python scripts/...` funziona anche dalla shell
+del servizio.
 
-**2. Aggiungi il volume**, in *Settings -> Volumes*, con punto di mount
-`/data`. E' l'unica cosa che sopravvive ai riavvii: senza, a ogni deploy
-perdi database, catalogo e utenti.
+**2. Aggiungi il volume**, in *Settings -> Volumes* (o ⌘K -> *Volume*), con
+punto di mount `/data`. E' l'unica cosa che sopravvive ai riavvii: senza,
+a ogni deploy perdi database, catalogo e utenti.
 
 **3. Variabili d'ambiente**, in *Variables*:
 
 ```
 TELEGRAM_BOT_TOKEN=quello di BotFather
 DATA_DIR=/data
-DATABASE_URL=sqlite:////data/ndoma.db      # quattro barre: percorso assoluto
 AGGIORNA_DAL_BOT=1                          # aggiornamento notturno alle 4:00
 BBOX=6.55,44.00,7.95,44.75
 HTTP_USER_AGENT=ndoma-a-skie/1.0 (contatto: tua@email.it)
 WEBAPP_URL=                                 # si compila al passo 4
 ```
 
-**4. Genera il dominio**, in *Settings -> Networking -> Generate Domain*.
-Copia l'indirizzo `https://...up.railway.app` in `WEBAPP_URL` e ridistribuisci:
-il bot scrive quell'indirizzo dentro il bottone che apre la mini app, quindi
-finche' e' vuoto il bottone non funziona.
+Meglio **non** impostare `DATABASE_URL`: lasciandolo vuoto il database
+finisce da solo in `$DATA_DIR/ndoma.db`, cioe' sul volume. Se lo imposti,
+dev'essere `sqlite:////data/ndoma.db` con **quattro** barre (percorso
+assoluto): il `.env` locale ne contiene uno relativo, che su Railway
+scriverebbe fuori dal volume e verrebbe perso a ogni deploy.
 
-**5. Popola il catalogo**, una volta sola, dalla shell del servizio:
+**4. Genera il dominio**, in *Settings -> Networking -> Generate Domain*.
+Copia l'indirizzo in `WEBAPP_URL` e ridistribuisci: il bot scrive
+quell'indirizzo dentro il bottone che apre la mini app, quindi finche' e'
+vuoto il bottone non funziona. Railway mostra il dominio senza `https://`
+e va bene lo stesso, ci pensa il programma ad aggiungerlo (Telegram accetta
+solo link https, e senza schema rifiutava il bottone).
+
+**5. Il catalogo si riempie da solo.** Al primo avvio, se in archivio ci sono
+meno di cinquanta itinerari, `deploy/avvio_railway.sh` lancia in sottofondo:
 
 ```bash
-python scripts/importa.py
-python scripts/aggiorna.py
+python scripts/importa.py && python scripts/aggiorna.py
 ```
 
-I confini comunali e le micro-regioni valanghe se li scarica da solo al primo
-avvio: sono dati derivati e non stanno nel repository.
+In sottofondo perche' ci vogliono alcuni minuti e Railway considera fallito
+un deploy che non apre subito la porta. Per seguirlo, dalla shell del
+servizio:
+
+```bash
+tail -f /data/primo_avvio.log
+```
+
+Nel frattempo il sito risponde gia', solo con il catalogo vuoto. Reimportare
+non duplica nulla: ogni itinerario si riconosce da fonte + identificativo.
+
+I confini comunali e le micro-regioni valanghe viaggiano nel repository gia'
+ritagliati sul BBOX (3 MB) e al primo avvio vengono copiati sul volume:
+rigenerarli richiederebbe di scaricare e analizzare un GeoJSON nazionale da
+un centinaio di MB, e su un container piccolo si finisce la memoria.
 
 **6. Backup.** Il database e' un file solo, ma con WAL attivo non si copia con
 `cp`:

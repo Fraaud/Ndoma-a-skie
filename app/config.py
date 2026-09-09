@@ -22,9 +22,25 @@ def _bbox(raw: str) -> tuple[float, float, float, float]:
     return tuple(parts)  # type: ignore[return-value]
 
 
+def _indirizzo(raw: str) -> str:
+    """Aggiunge https:// se manca.
+
+    Railway (come molti servizi) mostra il dominio senza schema, e copiarlo
+    cosi' com'e' fa fallire il bot: Telegram accetta solo link https per le
+    mini app. E' un errore quasi obbligatorio da fare, quindi si corregge qui
+    invece di lasciarlo esplodere all'avvio.
+    """
+    raw = (raw or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    if raw.startswith(("http://", "https://")):
+        return raw
+    return "https://" + raw
+
+
 class Settings:
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    webapp_url: str = os.getenv("WEBAPP_URL", "http://localhost:8000")
+    webapp_url: str = _indirizzo(os.getenv("WEBAPP_URL", "")) or "http://localhost:8000"
     telegram_group_id: str = os.getenv("TELEGRAM_GROUP_ID", "")
 
     skitour_api_key: str = os.getenv("SKITOUR_API_KEY", "")

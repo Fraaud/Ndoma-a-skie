@@ -177,11 +177,20 @@ async def aggiornamento_notturno(ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _post_init(app: Application) -> None:
-    # il bottone permanente accanto al campo di testo: e' il modo piu' comodo
-    # per riaprire l'app senza cercare il messaggio di /start
-    await app.bot.set_chat_menu_button(
-        menu_button=MenuButtonWebApp(text="Apri app", web_app=WebAppInfo(url=settings.webapp_url))
-    )
+    # Il bottone permanente accanto al campo di testo: il modo piu' comodo per
+    # riaprire l'app senza cercare il messaggio di /start. Se l'indirizzo non
+    # e' https Telegram lo rifiuta: va segnalato, ma non deve far cadere il
+    # bot, che per il resto (comandi, match, notifiche) funziona lo stesso.
+    if not settings.webapp_url.startswith("https://"):
+        log.warning("WEBAPP_URL non e' https (%s): la mini app non si aprira'. "
+                    "Telegram accetta solo indirizzi https.", settings.webapp_url)
+    try:
+        await app.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Apri app",
+                                         web_app=WebAppInfo(url=settings.webapp_url))
+        )
+    except Exception as e:
+        log.warning("bottone della mini app non impostato: %s", e)
     app.create_task(_ciclo_recupero_notifiche())
     log.info("recupero notifiche attivo, ogni 2 minuti")
 

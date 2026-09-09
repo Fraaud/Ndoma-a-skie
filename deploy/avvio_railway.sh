@@ -8,21 +8,16 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Attiva il virtual environment se esiste (es. /venv o .venv)
-if [ -d "/venv/bin" ]; then
-    source /venv/bin/activate
-elif [ -d ".venv/bin" ]; then
-    source .venv/bin/activate
-fi
+DATI="${DATA_DIR:-./data}"
+mkdir -p "$DATI"
 
 echo "== Ndoma a skie' - avvio =="
-echo "   cartella dati: ${DATA_DIR:-./data}"
+echo "   cartella dati: $DATI"
 
 # I file geografici viaggiano nel repository gia' ritagliati (3 MB): al primo
 # avvio si copiano sul volume. Rigenerarli qui vorrebbe dire scaricare e
 # analizzare un GeoJSON nazionale da un centinaio di MB, e su un container
 # piccolo si rischia di esaurire la memoria proprio al primo deploy.
-DATI="${DATA_DIR:-./data}"
 for f in comuni.geojson eaws_micro_regions.geojson; do
   if [ ! -f "$DATI/$f" ] && [ -f "data/$f" ]; then
     echo "   copio $f sul volume"
@@ -34,9 +29,34 @@ if [ ! -f "$DATI/comuni.geojson" ]; then
   python scripts/setup_geo.py || echo "   ATTENZIONE: preparazione dati non riuscita"
 fi
 
-# Il catalogo si importa una volta sola, e non all'avvio: e' lento e non deve
-# ritardare la risposta di Railway.  Prima volta, dalla shell del servizio:
-#     python scripts/importa.py && python scripts/aggiorna.py
+# Quante gite ci sono gia' in archivio. Se il database non esiste ancora,
+# init_db lo crea vuoto e la risposta e' zero.
+gite=$(python - <<'PY' 2>/dev/null || echo 0
+from app.db import SessionLocal, init_db
+from app.models import Gita
+init_db()
+db = SessionLocal()
+print(db.query(Gita).count())
+db.close()
+PY
+)
+echo "   catalogo: ${gite:-0} itinerari"
+
+# Primo avvio: si importa il catalogo e si scaricano meteo e bollettini.
+# In sottofondo, perche' ci vogliono minuti e Railway considera fallito un
+# deploy che non apre la porta subito. Il log finisce sul volume, cosi' lo si
+# rilegge dalla shell anche dopo:   tail -f $DATA_DIR/primo_avvio.log
+# La soglia non e' zero ma cinquanta: se un primo tentativo si e' interrotto
+# a meta' (rete, memoria) il riavvio successivo lo rifa' invece di restare
+# con mezzo catalogo per sempre. Importare due volte non duplica nulla:
+# gli itinerari si riconoscono dalla sorgente e dal loro identificativo.
+if [ "${gite:-0}" -lt 50 ]; then
+  echo "   catalogo da riempire: importo in sottofondo (qualche minuto)"
+  (
+    python scripts/importa.py && python scripts/aggiorna.py
+    echo "== primo avvio completato =="
+  ) >> "$DATI/primo_avvio.log" 2>&1 &
+fi
 
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
   echo "   avvio il bot Telegram"

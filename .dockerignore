@@ -1,0 +1,18 @@
+# Fuori dall'immagine tutto cio' che non serve a farla girare.
+.git
+.gitignore
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.env
+avvia.sh
+setup.sh
+docs/
+# I geojson ritagliati SI', restano (3 MB): sono quelli che al primo avvio
+# finiscono sul volume.  Il database no, quello nasce sul volume.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/cron.log
