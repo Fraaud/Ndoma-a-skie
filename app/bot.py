@@ -9,6 +9,7 @@ Un bot che nessuno apre e' un bot morto, per quanto sia bella l'app dentro.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 
@@ -16,6 +17,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebAp
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from app import notifiche as notifiche_srv
 from app.config import settings
 from app.db import init_db, session_scope
 from app.models import Gita, Uscita, Utente
@@ -121,12 +123,38 @@ async def promemoria_settimanale(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 log.warning("promemoria non inviato a %s: %s", tg_id, e)
 
 
+async def _ciclo_recupero_notifiche(intervallo: int = 120) -> None:
+    """Manda i match salvati ma mai notificati, per sempre.
+
+    E' un semplice ciclo asyncio e NON la coda dei lavori della libreria:
+    quella richiede l'estensione [job-queue], e se manca sparisce senza dire
+    niente. Il recupero delle notifiche e' troppo importante per dipendere
+    da una dipendenza opzionale.
+    """
+    from app.db import SessionLocal
+
+    await asyncio.sleep(15)
+    while True:
+        db = SessionLocal()
+        try:
+            n = await notifiche_srv.notifica_arretrati(db)
+            if n:
+                log.info("recuperate %s notifiche di match arretrate", n)
+        except Exception as e:
+            log.warning("recupero notifiche fallito: %s", e)
+        finally:
+            db.close()
+        await asyncio.sleep(intervallo)
+
+
 async def _post_init(app: Application) -> None:
     # il bottone permanente accanto al campo di testo: e' il modo piu' comodo
     # per riaprire l'app senza cercare il messaggio di /start
     await app.bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(text="Apri app", web_app=WebAppInfo(url=settings.webapp_url))
     )
+    app.create_task(_ciclo_recupero_notifiche())
+    log.info("recupero notifiche attivo (ogni 2 minuti)")
 
 
 def main() -> None:
@@ -141,6 +169,11 @@ def main() -> None:
     if app.job_queue:
         # giovedi' alle 19:00 (ora del server)
         app.job_queue.run_daily(promemoria_settimanale, time=dt.time(19, 0), days=(3,))
+    else:
+        log.warning(
+            "CODA DEI LAVORI ASSENTE: il promemoria del giovedi' non partira'. "
+            "Installa le dipendenze aggiornate:  pip install -r requirements.txt"
+        )
     log.info("bot avviato")
     app.run_polling()
 

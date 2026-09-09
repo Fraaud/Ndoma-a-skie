@@ -58,24 +58,46 @@ def _sulla_stessa_strada(db: Session, a: Uscita, b: Uscita, ga: Gita, gb: Gita) 
 
 def valuta(db: Session, a: Uscita, b: Uscita) -> tuple[float, str] | None:
     """Punteggio di compatibilita' fra due uscite, o None se incompatibili."""
-    if a.id == b.id or a.autore_id == b.autore_id:
+    e = spiega(db, a, b)
+    if e["scarto"] or e["punteggio"] < SOGLIA:
         return None
+    return e["punteggio"], "; ".join(e["motivi"])
+
+
+def spiega(db: Session, a: Uscita, b: Uscita) -> dict:
+    """Come valuta(), ma dice anche PERCHE' due uscite non combaciano.
+
+    Serve a rispondere alla domanda che arriva sempre - "perche' non mi ha
+    avvisato?" - senza doverlo dedurre leggendo il codice. La usa
+    scripts/prova_match.py.
+    """
+    esito: dict = {"punteggio": 0.0, "motivi": [], "scarto": None}
+
+    def scarta(perche: str) -> dict:
+        esito["scarto"] = perche
+        return esito
+
+    if a.id == b.id:
+        return scarta("e' la stessa uscita")
+    if a.autore_id == b.autore_id:
+        return scarta("stessa persona: non si fa match con se stessi")
     if a.stato != "aperta" or b.stato != "aperta":
-        return None
+        return scarta("una delle due uscite non e' piu' aperta")
 
     # combinazioni ammesse
     coppia = {a.tipo, b.tipo}
-    if coppia == {"OFFRO", "CERCO"} or coppia == {"COMPAGNI"} or coppia == {"OFFRO", "COMPAGNI"} \
-            or coppia == {"CERCO", "COMPAGNI"}:
-        pass
-    else:
-        return None
+    if coppia not in ({"OFFRO", "CERCO"}, {"COMPAGNI"}, {"OFFRO", "COMPAGNI"},
+                      {"CERCO", "COMPAGNI"}):
+        return scarta(f"ruoli non compatibili ({a.tipo} e {b.tipo})")
 
     # data
     tolleranza = max(a.flessibilita, b.flessibilita)
     diff = _giorni(a.data, b.data)
     if diff > tolleranza:
-        return None
+        return scarta(
+            f"date distanti {diff} giorni, ma la flessibilita' massima "
+            f"dichiarata e' {tolleranza}"
+        )
     punti = 3.0 if diff == 0 else 2.0
     motivi = ["stessa data"] if diff == 0 else [f"date a {diff} giorno/i di distanza"]
 
@@ -102,14 +124,22 @@ def valuta(db: Session, a: Uscita, b: Uscita) -> tuple[float, str] | None:
             # In montagna due attacchi a 10 km possono stare su due valli
             # diverse e a 90 km di strada, perche' bisogna scendere a valle
             # e risalire. L'unica prossimita' che conta e' quella stradale.
-            return None
+            dettaglio = ""
+            if ga and gb and not (ga.valle and gb.valle):
+                dettaglio = (" (a una delle due gite manca la valle: molti "
+                             "itinerari importati non ce l'hanno)")
+            return scarta(
+                f"gite diverse e non collegate: '{ga.nome if ga else a.zona}' e "
+                f"'{gb.nome if gb else b.zona}' non sono nella stessa valle, "
+                f"nello stesso comune, ne' una sulla strada dell'altra{dettaglio}"
+            )
 
     # corridoio: chi guida passa dal comune di chi cerca?
     autista = a if a.tipo == "OFFRO" else (b if b.tipo == "OFFRO" else None)
     passeggero = b if autista is a else a
     if autista is not None:
         if autista.posti <= 0:
-            return None
+            return scarta("chi guida ha dichiarato zero posti liberi")
         perc = _percorso(db, autista)
         if perc and passeggero.istat_partenza and passeggero.istat_partenza in (perc.comuni_istat or []):
             punti += 4.0
@@ -141,9 +171,12 @@ def valuta(db: Session, a: Uscita, b: Uscita) -> tuple[float, str] | None:
         except Exception:
             pass
 
+    esito["punteggio"] = round(punti, 1)
+    esito["motivi"] = motivi
     if punti < SOGLIA:
-        return None
-    return punti, "; ".join(motivi)
+        esito["scarto"] = (f"punteggio {punti:.1f}, sotto la soglia di {SOGLIA} "
+                           f"(manca la prossimita' fra i punti di partenza)")
+    return esito
 
 
 def candidati(db: Session, uscita: Uscita) -> list[Uscita]:

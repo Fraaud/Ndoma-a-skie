@@ -7,7 +7,6 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -16,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app import notifiche as notifiche_srv
 from app import schede
 from app.auth import utente_corrente
 from app.config import settings
@@ -448,44 +448,10 @@ def percorso_uscita(uscita_id: int, db: Session = Depends(get_db)):
 # --------------------------------------------------------- notifiche bot
 
 
-async def _invia_telegram(chat_id: int, testo: str) -> None:
-    if not settings.telegram_bot_token:
-        return
-    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
-    async with httpx.AsyncClient(timeout=15) as c:
-        try:
-            await c.post(url, json={
-                "chat_id": chat_id, "text": testo,
-                "parse_mode": "HTML", "disable_web_page_preview": True,
-            })
-        except Exception:
-            pass
-
-
 async def _notifica_match(db: Session, m: Match) -> None:
-    a = db.get(Uscita, m.uscita_a_id)
-    b = db.get(Uscita, m.uscita_b_id)
-    if not a or not b:
-        return
-    for mio, altro in ((a, b), (b, a)):
-        autore = db.get(Utente, mio.autore_id)
-        if not autore or not autore.notifiche:
-            continue
-        gita = db.get(Gita, altro.gita_id) if altro.gita_id else None
-        dove = gita.nome if gita else (altro.zona or "zona da definire")
-        chi = f"@{altro.autore.username}" if altro.autore and altro.autore.username else (
-            altro.autore.nome if altro.autore else "qualcuno")
-        ruolo = {"OFFRO": "offre posti", "CERCO": "cerca un passaggio",
-                 "COMPAGNI": "cerca compagnia"}[altro.tipo]
-        await _invia_telegram(
-            autore.tg_id,
-            f"<b>Match!</b>\n{chi} {ruolo} per <b>{dove}</b> "
-            f"il {altro.data.strftime('%d/%m')}"
-            + (f" da {altro.comune_partenza}" if altro.comune_partenza else "")
-            + f"\n<i>{m.motivo}</i>",
-        )
-    m.notificato = True
-    db.commit()
+    """Notifica immediata. Se fallisce, il match resta con notificato=False
+    e ci pensa il bot a ritentare: vedi app/notifiche.py."""
+    await notifiche_srv.notifica_match(db, m)
 
 
 @app.get("/api/salute")

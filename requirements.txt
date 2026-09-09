@@ -6,7 +6,9 @@ pydantic==2.10.4
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
 shapely==2.0.6
-python-telegram-bot==21.9
+# [job-queue] porta APScheduler: senza, il promemoria del giovedi'
+# e i lavori periodici del bot non partono, e lo fanno IN SILENZIO
+python-telegram-bot[job-queue]==21.9
 
 # test (girano senza rete: pytest -q)
 pytest==8.3.4
