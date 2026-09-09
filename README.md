@@ -1,0 +1,223 @@
+# 'NDUMA A SGHIE'
+
+Mini app Telegram per lo scialpinismo del Cuneese e del Mercantour.
+
+Due cose in una:
+
+1. **Scheda gita** — per ogni itinerario: meteo, qualita' della neve prevista
+   (*powder score*) e pericolo valanghe ufficiale. Utile dal primo giorno,
+   anche con un solo utente.
+2. **Passaggi in auto** — chi offre posti, chi cerca un passaggio, chi cerca
+   compagnia. Il match tiene conto dei **comuni che l'auto attraversa**, non
+   della distanza in linea d'aria: quello che conta e' essere sulla strada.
+
+---
+
+## Da dove vengono i dati
+
+Solo fonti aperte, con attribuzione e link alla sorgente in ogni scheda.
+
+| Cosa | Fonte | Licenza / accesso |
+|---|---|---|
+| Itinerari | [Camptocamp.org](https://www.camptocamp.org/api/) | CC-BY-SA, API pubblica |
+| Itinerari (versante francese) | [Skitour.fr](https://skitour.fr/api/) | CC-BY-SA 4.0, chiave gratuita |
+| Itinerari e parcheggi | OpenStreetMap (Overpass) | ODbL |
+| Meteo | [Open-Meteo](https://open-meteo.com/) | gratuito non commerciale, senza chiave |
+| Micro-regioni valanghe | [regions.avalanches.org](https://regions.avalanches.org/) | open data |
+| Bollettini valanghe | [archivio EAWS](https://static.avalanche.report/eaws_bulletins/), [AINEVA](https://bollettini.aineva.it/) | bollettini ufficiali (Piemonte: ARPA Piemonte) |
+| Confini comunali | ISTAT via [OnData/openpolis](https://www.confini-amministrativi.it/) | open data |
+| Percorsi auto | [openrouteservice](https://openrouteservice.org/) | chiave gratuita (facoltativa) |
+
+**Nessuno scraping.** Non copiamo relazioni, descrizioni, avvicinamenti o foto
+da siti che non le rilasciano con licenza aperta — e nemmeno loro riassunti,
+che restano opere derivate. Del catalogo ci servono otto campi: nome,
+coordinate del parcheggio, quote, dislivello, esposizione, difficolta'. La
+relazione si legge sulla fonte, che ogni scheda linka.
+
+Se vuoi aggiungere una fonte chiusa (per esempio Gulliver, il riferimento del
+Piemonte), la strada e' scrivere e chiedere. C'e' una bozza di mail pronta in
+`docs/mail-gulliver.md`.
+
+---
+
+## Installazione (Mac, sviluppo locale)
+
+```bash
+cd nduma
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # poi apri .env e compila
+```
+
+### 1. Crea il bot
+
+Su Telegram, scrivi a [@BotFather](https://t.me/BotFather):
+
+```
+/newbot        -> nome e username, ti da' il TOKEN
+```
+
+Metti il token in `.env` come `TELEGRAM_BOT_TOKEN`.
+
+### 2. Controlla che le fonti rispondano
+
+```bash
+python scripts/check_fonti.py
+```
+
+Fallo **prima di tutto il resto**: ti dice in trenta secondi cosa risponde,
+quali chiavi mancano e in che formato arrivano i dati. Se qualcosa e' rosso,
+il posto da sistemare e' `app/config.py` (gli URL stanno tutti li').
+
+> Fuori stagione i bollettini valanghe non esistono: in Piemonte l'emissione
+> e' sospesa d'estate e riprende a inizio inverno. Se a settembre il punto 4
+> e' giallo, e' normale.
+
+### 3. Prepara i dati geografici
+
+```bash
+python scripts/setup_geo.py
+```
+
+Scarica confini comunali e micro-regioni valanghe, li ritaglia sulla bbox e
+riempie la tabella dei comuni. Serve **prima** dell'import: senza, le gite
+finiscono senza comune e senza zona valanghe.
+
+### 4. Importa il catalogo
+
+```bash
+python scripts/importa.py                # tutte le fonti
+python scripts/importa.py camptocamp     # una sola
+```
+
+L'import e' lento di proposito (una pausa fra le chiamate): stiamo chiedendo
+dati a server tenuti in piedi da volontari.
+
+### 5. Popola meteo e bollettini
+
+```bash
+python scripts/aggiorna.py
+```
+
+Da mettere in cron tutte le notti. **Non chiamare le API a ogni apertura
+dell'app**: il venerdi' sera si collegano tutti insieme e con 200 gite si
+sfora subito il tier gratuito.
+
+```
+0 4 * * *  cd /percorso/nduma && ./venv/bin/python scripts/aggiorna.py >> data/cron.log 2>&1
+```
+
+### 6. Avvia
+
+Due processi, in due terminali:
+
+```bash
+uvicorn app.main:app --reload --port 8000     # web app + API
+python -m app.bot                              # bot Telegram
+```
+
+Telegram pretende **https** per le mini app, quindi in locale serve un tunnel:
+
+```bash
+brew install cloudflared
+cloudflared tunnel --url http://localhost:8000
+```
+
+Copia l'URL che ti stampa (`https://qualcosa.trycloudflare.com`) in `.env`
+come `WEBAPP_URL`, riavvia il bot, e su Telegram fai `/start`.
+
+Verifica veloce dello stato: <http://localhost:8000/api/salute>
+
+---
+
+## Com'e' fatto
+
+```
+app/
+  main.py            API FastAPI + serve la mini app
+  bot.py             bot Telegram: /start, promemoria del giovedi', notifiche
+  models.py          Gita, Utente, Uscita, Match, Percorso, Comune, cache
+  auth.py            verifica HMAC dell'initData Telegram (unico punto di sicurezza)
+  geo.py             indici spaziali: comune di un punto, comuni attraversati
+  schede.py          composizione scheda gita + cache meteo/bollettini
+  services/
+    meteo.py         Open-Meteo
+    powder.py        formula della qualita' della neve
+    valanghe.py      bollettini EAWS + evidenziatore esposizione/quota
+    routing.py       percorso auto e comuni attraversati
+    match.py         punteggio di compatibilita' fra uscite
+  static/            mini app (html + css + un solo js)
+importers/           camptocamp, skitour, osm
+scripts/             check_fonti, setup_geo, importa, aggiorna
+```
+
+### Il powder score
+
+Combina, sulle 72 ore prima della partenza:
+
+- neve fresca a 24/48/72h alla quota dell'attacco
+- vento durante e dopo la nevicata (e' il vento che trasforma la polvere in
+  crosta e lastroni)
+- temperatura durante la nevicata, come proxy della densita'
+- ore dall'ultima nevicata
+- veto se e' piovuto dopo la neve
+
+Restituisce 0-5 con l'elenco dei fattori in chiaro: chi legge deve poter
+capire *perche'*, non fidarsi di un numero.
+
+**E restituisce anche `avviso_valanghe`.** Neve fresca abbondante piu' vento
+e' insieme la giornata piu' bella e la ricetta del lastrone: l'app lo dice
+esplicitamente invece di mostrare cinque fiocchi e tacere. Non togliere
+quell'avviso dall'interfaccia.
+
+### Il bollettino valanghe
+
+Regole di prodotto, in `app/services/valanghe.py`:
+
+1. Nessun grado di pericolo calcolato da noi: solo quello ufficiale EAWS.
+2. Nessun semaforo verde, nessun "si puo' andare".
+3. Sempre visibili ente emittente, ora di emissione e link al bollettino integrale.
+4. L'*evidenziatore* incrocia esposizione e quota della gita con quelle del
+   problema segnalato. Dice "questa gita ci passa dentro, leggi il bollettino".
+   Non dice se la gita e' sicura, e non deve mai farlo.
+
+### Il match
+
+Punteggio (soglia 5):
+
+| Criterio | Punti |
+|---|---|
+| il comune di chi cerca e' **sul percorso** di chi guida | +4 |
+| entro 8 km dal percorso | +2,5 |
+| stessa gita | +3 |
+| stessa data | +3 (entro flessibilita': +2) |
+| stessa zona / valle | +1,5 |
+| orari compatibili | +0,5 |
+
+I percorsi si calcolano una volta per coppia (comune, gita) e restano in
+cache: le combinazioni reali sono poche centinaia.
+
+---
+
+## Da fare dopo
+
+- [ ] scrivere a Gulliver (bozza in `docs/mail-gulliver.md`)
+- [ ] seed manuale: 15 gite preferite a testa dal gruppo. Chi riempie il
+      catalogo diventa il primo utente, ed e' cosi' che si parte davvero
+- [ ] deploy su un server piccolo quando funziona in locale
+- [ ] rimborso benzina calcolato sui km del percorso (i dati ci sono gia')
+- [ ] gite ricorrenti ("tutti i sabati parto da Cuneo alle 6")
+
+Volutamente **non** nella v1: pagamenti, rating degli utenti, chat interna.
+Il rimborso benzina lo decidono in chat come hanno sempre fatto.
+
+---
+
+## Licenza e responsabilita'
+
+I dati degli itinerari appartengono alle rispettive fonti, con le licenze
+indicate sopra: vanno mantenute attribuzione e link.
+
+Questa app **non valuta la sicurezza di un itinerario** e non sostituisce il
+bollettino valanghe ufficiale, la preparazione, l'attrezzatura e il giudizio
+di chi va in montagna.
