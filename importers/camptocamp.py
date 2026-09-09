@@ -104,10 +104,10 @@ def _attacco(dettaglio: dict) -> tuple[float, float] | None:
 # ------------------------------------------------------------------ rete
 
 
-async def _pagina(c: httpx.AsyncClient, offset: int) -> list[dict]:
+async def _pagina(c: httpx.AsyncClient, area: int, offset: int) -> list[dict]:
     r = await c.get(
         f"{settings.url_camptocamp}/routes",
-        params={"act": "skitouring", "limit": PER_PAGINA, "offset": offset},
+        params={"act": "skitouring", "a": area, "limit": PER_PAGINA, "offset": offset},
     )
     r.raise_for_status()
     return r.json().get("documents", [])
@@ -131,32 +131,44 @@ async def importa(
     candidati: list[tuple[dict, tuple[float, float]]] = []
 
     async with httpx.AsyncClient(timeout=45, headers=headers, follow_redirects=True) as c:
-        # --- fase 1: scorri l'elenco e tieni solo quello che cade nella zona
+        # --- fase 1: scorri le aree e tieni solo quello che cade nella zona
         print("  fase 1: cerco gli itinerari nella zona...")
-        offset = 0
-        for pagina in range(pagine_massime):
-            try:
-                documenti = await _pagina(c, offset)
-            except Exception as e:
-                print(f"  errore alla pagina {pagina} (offset {offset}): {e}")
-                break
-            if not documenti:
-                break
-            for doc in documenti:
-                attivita = doc.get("activities") or []
-                if attivita and "skitouring" not in attivita:
-                    continue
-                punto = _coordinate(doc.get("geometry"))
-                if punto and dentro_bbox(punto[1], punto[0]):
-                    candidati.append((doc, punto))
-            offset += len(documenti)
-            if pagina % 20 == 0:
-                print(f"    {offset} itinerari esaminati, {len(candidati)} nella zona")
-            if len(documenti) < PER_PAGINA:
-                break
-            await asyncio.sleep(pausa_elenco)
+        visti: set[int] = set()   # un itinerario puo' stare in due aree
+        esaminati = 0
+        for area in settings.camptocamp_aree:
+            offset = 0
+            for pagina in range(pagine_massime):
+                try:
+                    documenti = await _pagina(c, area, offset)
+                except Exception as e:
+                    print(f"    area {area}, offset {offset}: {e}")
+                    break
+                if not documenti:
+                    break
+                for doc in documenti:
+                    doc_id = doc.get("document_id")
+                    if doc_id in visti:
+                        continue
+                    visti.add(doc_id)
+                    esaminati += 1
+                    attivita = doc.get("activities") or []
+                    if attivita and "skitouring" not in attivita:
+                        continue
+                    punto = _coordinate(doc.get("geometry"))
+                    if punto and dentro_bbox(punto[1], punto[0]):
+                        candidati.append((doc, punto))
+                offset += len(documenti)
+                # NON fermarsi su una pagina corta: l'API a volte restituisce
+                # 99 risultati invece di 100 pur avendone ancora. E oltre
+                # offset 10000 risponde 400, quindi ci si ferma prima.
+                if offset >= 9900:
+                    print(f"    area {area}: raggiunto il tetto di paginazione")
+                    break
+                await asyncio.sleep(pausa_elenco)
+            print(f"    area {area}: totale {esaminati} esaminati, "
+                  f"{len(candidati)} nella zona")
 
-        print(f"  fase 1 finita: {offset} esaminati, {len(candidati)} nella zona")
+        print(f"  fase 1 finita: {esaminati} esaminati, {len(candidati)} nella zona")
         if not candidati:
             print("  ATTENZIONE: nessun itinerario trovato nella bbox.")
             print(f"  Controlla BBOX nel .env (ora: {settings.bbox}).")

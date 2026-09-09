@@ -68,6 +68,18 @@ class Settings:
     # Per il Cuneese servono Piemonte e Francia.
     eaws_regioni = ["IT-21", "FR"]
 
+    # Aree di Camptocamp da cui pescare gli itinerari.
+    # L'API impagina con offset ma si ferma a 10000 (errore 400 oltre): senza
+    # filtro per area l'elenco completo e' irraggiungibile. Filtrando per area
+    # ogni insieme e' piccolo e si scorre tutto.
+    # Per trovare l'id di un'altra area:
+    #   https://api.camptocamp.org/search?q=NOME&t=a
+    camptocamp_aree = [
+        280000,  # Provincia di Cuneo      (~400 itinerari di scialpinismo)
+        14360,   # Alpes-Maritimes         (~320, versante Mercantour)
+        14362,   # Alpes-de-Haute-Provence (Ubaye, alta Tinee)
+    ]
+
 
 @lru_cache
 def get_settings() -> Settings:
