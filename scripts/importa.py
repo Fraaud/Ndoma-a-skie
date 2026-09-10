@@ -39,12 +39,19 @@ async def principale(fonti: list[str]) -> None:
         from importers import osm
         print("\n== OpenStreetMap ==")
         totale += await osm.importa()
+    if "posti" in fonti:
+        # per ultimo, e non per caso: i parcheggi si tengono solo se stanno
+        # vicino a una gita, quindi il catalogo deve esserci gia'
+        from importers import posti
+        print("\n== Parcheggi, ripari e piole (OSM) ==")
+        esito = await posti.importa()
+        print(f"  {esito['nuovi']} nuovi, {esito['aggiornati']} aggiornati")
 
     print(f"\nTotale importate: {totale}")
     print("Ricorda: le relazioni restano sulle fonti, noi linkiamo e attribuiamo.")
 
 
 if __name__ == "__main__":
-    scelte = sys.argv[1:] or ["camptocamp", "skitour", "osm"]
+    scelte = sys.argv[1:] or ["camptocamp", "skitour", "osm", "posti"]
     print(f"bbox: {settings.bbox}")
     asyncio.run(principale(scelte))

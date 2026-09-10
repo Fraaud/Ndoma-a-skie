@@ -56,7 +56,7 @@ conta() {
   n=$(python - "$1" 2>/dev/null <<'CONTA' | tail -n 1 | tr -cd '0-9'
 import sys, datetime as dt
 from app.db import SessionLocal, init_db
-from app.models import Comune, Condizioni, Gita
+from app.models import Comune, Condizioni, Gita, Posto
 init_db()
 db = SessionLocal()
 quale = sys.argv[1]
@@ -64,6 +64,11 @@ if quale == "gite":
     print(db.query(Gita).count())
 elif quale == "comuni":
     print(db.query(Comune).count())
+elif quale == "posti":
+    print(db.query(Posto).count())
+elif quale == "simulazione":
+    from app import simulazione
+    print(1 if simulazione.caricata(db) else 0)
 else:
     print(db.query(Condizioni).filter(Condizioni.giorno >= dt.date.today()).count())
 db.close()
@@ -108,10 +113,28 @@ if [ "$gite" -lt 300 ]; then
   lavoro="python scripts/importa.py"
 fi
 
+# Parcheggi, ripari e piole: si scaricano una volta e non si toccano piu'
+# (un parcheggio non si sposta). Servono anche alla schermata Emergenza, che
+# tiene i ripari da parte per quando non c'e' campo, quindi vale la pena
+# averli anche se nessuno ha ancora aperto una scheda.
+if [ "$gite" -ge 300 ] && [ "$(conta posti)" -eq 0 ]; then
+  echo "   nessun parcheggio in archivio: li scarico da OpenStreetMap"
+  lavoro="${lavoro:+$lavoro && }python scripts/importa_posti.py"
+fi
+
 # Meteo e bollettini si rifanno comunque ogni notte: qui servono solo se non
 # c'e' proprio niente, cioe' al primo avvio o dopo un import interrotto.
+#
+# Il secondo caso e' piu' sottile: la simulazione appena accesa. In archivio
+# le condizioni CI SONO (sono quelle vere), quindi il controllo qui sopra
+# risponderebbe "tutto a posto" e la simulazione comparirebbe solo dopo
+# l'aggiornamento notturno - cioe' domani. Chi ha appena impostato la
+# variabile si aspetta di vederla adesso, e ha ragione.
 if [ "$condizioni" -eq 0 ]; then
   echo "   nessuna condizione in archivio: scarico meteo e bollettini"
+  lavoro="${lavoro:+$lavoro && }python scripts/aggiorna.py"
+elif [ -n "${SIMULAZIONE_INVERNO:-}" ] && [ "$(conta simulazione)" -eq 0 ]; then
+  echo "   simulazione accesa ma in archivio ci sono i dati veri: la carico"
   lavoro="${lavoro:+$lavoro && }python scripts/aggiorna.py"
 fi
 
