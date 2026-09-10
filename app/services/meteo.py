@@ -27,7 +27,11 @@ ORARIE = [
 # modelli lo espongono, quindi se la chiamata fallisce si riprova senza.
 ORARIE_QUOTA = ["wind_speed_700hPa", "wind_direction_700hPa", "temperature_700hPa"]
 
-GIORNALIERE = ["temperature_2m_max", "temperature_2m_min", "snowfall_sum", "precipitation_sum"]
+# "sunset" non e' decorazione: e' il dato piu' utile della schermata
+# Emergenza, e va scaricato PRIMA - insieme alla scheda - perche' quando
+# serve, in valle, il telefono e' probabilmente senza campo.
+GIORNALIERE = ["temperature_2m_max", "temperature_2m_min", "snowfall_sum",
+               "precipitation_sum", "sunrise", "sunset"]
 
 
 async def previsioni(
@@ -58,6 +62,12 @@ async def previsioni(
         if r.status_code == 400:
             # probabile variabile non supportata dal modello: riprova senza i livelli di pressione
             params["hourly"] = ",".join(ORARIE)
+            r = await c.get(settings.url_open_meteo, params=params)
+        if r.status_code == 400:
+            # ultimo tentativo: solo le giornaliere storiche. Meglio una
+            # scheda senza tramonto che una scheda senza meteo.
+            params["daily"] = ",".join(
+                v for v in GIORNALIERE if v not in ("sunrise", "sunset"))
             r = await c.get(settings.url_open_meteo, params=params)
         r.raise_for_status()
         return r.json()
@@ -131,4 +141,15 @@ def sintesi_giorno(dati: dict, giorno: dt.date) -> dict[str, Any]:
         "vento_dir": valore_a(dati, mezzo, "wind_direction_10m"),
         "vento_quota_kmh": valore_a(dati, mezzo, "wind_speed_700hPa"),
         "neve_al_suolo_cm": (valore_a(dati, mezzo, "snow_depth") or 0) * 100,
+        # solo l'ora, non la data: e' quello che si legge in Emergenza
+        "tramonto": _ora(d.get("sunset", []), idx),
+        "alba": _ora(d.get("sunrise", []), idx),
     }
+
+
+def _ora(serie: list, idx: int | None) -> str | None:
+    """"2026-02-14T17:42" -> "17:42". None se il dato non c'e'."""
+    if idx is None or idx >= len(serie or []):
+        return None
+    v = serie[idx]
+    return str(v)[11:16] if v else None

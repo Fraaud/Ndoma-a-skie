@@ -86,6 +86,14 @@ function ricercaLive(input, percorso, disegna, minimo = 2, attesa = 250) {
 // gita aperta al momento, per passarla al modulo "ci vai?" senza rileggerla
 let GITA_CORRENTE = null;
 
+/* Posizione GPS e sorveglianza attiva: stanno qui in cima, e non accanto
+   alla schermata Emergenza che le usa, perche' il router le azzera quando
+   si cambia vista - e una variabile dichiarata dopo chi la legge e' una
+   trappola che aspetta soltanto il giorno in cui qualcuno sposta una
+   funzione. */
+let POSIZIONE = null;
+let SORVEGLIANZA = null;
+
 const BANNER_BROWSER = `<div class="avviso">
   Stai guardando dal browser, fuori da Telegram: puoi sfogliare le gite ma
   <b>non pubblicare</b>, perche' l'app non sa chi sei. Apri il bot su Telegram
@@ -111,6 +119,10 @@ function rigaEsperienza(autore) {
   const assente = t === "esperienza non dichiarata";
   return `<div class="esperienza${assente ? " assente" : ""}">${esc(t)}</div>`;
 }
+
+/* La freccetta a destra delle righe toccabili. Non e' decorazione: e' il
+   segno con cui su un telefono si capisce che una riga si apre. */
+const FRECCIA = `<svg class="freccia" viewBox="0 0 8 14"><path d="M1 1l6 6-6 6"/></svg>`;
 
 function dataIt(iso) {
   const d = new Date(iso + "T00:00:00");
@@ -204,6 +216,99 @@ async function disegnaAvvicinamento(gitaId, riprova = true) {
           uno di questi paesi e' sulla tua strada: e' cosi' che l'app trova i
           passaggi.</div></div>` : ""}
     </div>`;
+
+  disegnaPiole(d.piole || []);
+}
+
+/* Le piole lungo la strada di casa.
+
+   Il filtro non e' "vicino all'attacco" ma "lungo il corridoio del
+   ritorno": alle cinque di sera, a 1600 m, non c'e' niente di aperto - la
+   piola dove ci si ferma e' in fondovalle. E' lo stesso corridoio che serve
+   ai passaggi in auto, letto al contrario. */
+function disegnaPiole(piole) {
+  const box = document.getElementById("piole");
+  if (!box || !box.isConnected) return;
+  if (!piole.length) { box.innerHTML = ""; return; }
+
+  box.innerHTML = `<h2>Dopo la gita</h2>
+    <div class="gruppo">
+      ${piole.map(p => `<div class="voce" style="cursor:default">
+        <div class="corpo">
+          <div class="titolo" style="font-size:15.5px">${esc(p.etichetta)}</div>
+          <div class="meta">${esc(p.genere || "")}${p.comune ? " &middot; " + esc(p.comune) : ""}</div>
+        </div>
+        ${p.dettagli?.phone ? `<a class="secondario" style="text-decoration:none"
+          href="tel:${esc(String(p.dettagli.phone).replace(/[^+\d]/g, ""))}">chiama</a>` : ""}
+      </div>`).join("")}
+    </div>
+    <div class="hint" style="padding:0 var(--lato)">Sulla strada di casa, nei
+      paesi che attraversi. Da OpenStreetMap: <b>gli orari non li mostriamo</b>
+      perche' in valle sono vecchi di anni &mdash; meglio una telefonata.</div>`;
+}
+
+/* Parcheggi e ripari all'attacco.
+
+   La capienza del parcheggio e' il dato piu' nostro che esista: l'app e'
+   nata da sei macchine ferme in un piazzale. Nessun'altra app la mostra,
+   e OpenStreetMap ce l'ha.
+
+   I ripari si scaricano qui anche se nessuno li ha chiesti, e si tengono da
+   parte per la schermata Emergenza: quando serviranno, in valle, il
+   telefono sara' probabilmente senza campo. */
+async function disegnaPosti(gita, tramonto) {
+  const box = document.getElementById("posti");
+  if (!box) return;
+  let d;
+  try {
+    d = await api("/posti/" + gita.id);
+  } catch (e) {
+    box.innerHTML = "";
+    return;
+  }
+  if (!box.isConnected) return;
+  ricordaPerEmergenza(gita, d.ripari || [], tramonto);
+
+  const parcheggi = d.parcheggi || [];
+  let h = "";
+  if (parcheggi.length) {
+    h += `<h2>Al parcheggio</h2><div class="gruppo">`;
+    for (const p of parcheggi) {
+      const posti = p.capienza !== null && p.capienza !== undefined;
+      h += `<div class="voce" style="cursor:default">
+        <div class="corpo">
+          <div class="titolo" style="font-size:15.5px">${esc(p.etichetta)}</div>
+          <div class="meta">${p.distanza_m < 1000
+            ? p.distanza_m + " m dall'attacco" : p.distanza_km + " km dall'attacco"}
+            ${p.quota ? " &middot; " + p.quota + " m" : ""}
+            ${p.dettagli?.fee === "yes" ? " &middot; a pagamento" : ""}</div>
+        </div>
+        <div class="coda">
+          <div class="posti-num${posti ? "" : " ignota"}">${posti
+            ? p.capienza + `<span> posti</span>` : "capienza ignota"}</div>
+        </div>
+      </div>`;
+    }
+    h += `</div><div class="hint" style="padding:0 var(--lato)">${esc(d.avvertenza || "")}</div>`;
+  }
+
+  const ripari = d.ripari || [];
+  if (ripari.length) {
+    h += `<h2>Ripari nei paraggi</h2><div class="gruppo">`;
+    for (const r of ripari.slice(0, 4)) {
+      h += `<div class="voce" style="cursor:default">
+        <div class="corpo">
+          <div class="titolo" style="font-size:15.5px">${esc(r.etichetta)}</div>
+          <div class="meta">${esc(r.genere || "")} &middot; ${r.distanza_km} km
+            ${r.quota ? " &middot; " + r.quota + " m" : ""}</div>
+        </div>
+      </div>`;
+    }
+    h += `</div><div class="hint" style="padding:0 var(--lato)">Restano
+      disponibili in <b>Emergenza</b> anche senza campo: li ho scaricati
+      adesso, insieme alla scheda.</div>`;
+  }
+  box.innerHTML = h;
 }
 
 /* La rosa delle esposizioni, come la disegnano i bollettini.
@@ -255,10 +360,24 @@ function fasciaQuota(pr) {
 const VISTE = {};
 let vistaCorrente = "weekend";
 
+/* Sapere non ha piu' una voce nella barra: ci si arriva dal profilo. Mentre
+   lo si legge la barra resta accesa sul profilo, altrimenti si spegnerebbe
+   tutta e non si capirebbe piu' dove si e'. */
+const TAB_DI = { sapere: "profilo", emergenza: "profilo" };
+
 function vai(nome, arg) {
   vistaCorrente = nome;
+  const tab = TAB_DI[nome] || nome;
   document.querySelectorAll("nav button").forEach(b =>
-    b.classList.toggle("on", b.dataset.vista === nome));
+    b.classList.toggle("on", b.dataset.vista === tab));
+  // il GPS resta accesso finche' non glielo si dice: lasciarlo in ascolto
+  // dopo aver chiuso Emergenza vorrebbe dire consumare batteria per
+  // niente, ed e' batteria che in montagna serve
+  if (SORVEGLIANZA !== null && nome !== "emergenza") {
+    try { navigator.geolocation.clearWatch(SORVEGLIANZA); } catch (e) {}
+    SORVEGLIANZA = null;
+    POSIZIONE = null;
+  }
   el.innerHTML = '<div class="carico">Carico...</div>';
   mappa = null;
   (VISTE[nome] || VISTE.weekend)(arg).catch(e => {
@@ -307,10 +426,10 @@ VISTE.weekend = async function (giorno) {
   const g = giorno || prossimoSabato();
 
   const dati = await api("/weekend?giorno=" + g);
-  let h = `<div class="wrap"><h1>Dove ha nevicato</h1>
-    <div class="hint" style="margin:-6px 0 12px">Centimetri misurati dal modello
-    meteo e grado di pericolo ufficiale. Non e' una classifica di dove convenga
-    andare: quella decisione non la fa l'app.</div>
+  // titolo corto e sottotitolo di una riga: la spiegazione lunga sta in
+  // fondo, nel disclaimer, dove non si mette fra il titolo e i dati
+  let h = `<div class="wrap"><h1>Weekend</h1>
+    <div class="hint">Dove e' caduta neve, e il grado ufficiale.</div>
     ${strisciaGiorni(g)}`;
 
   if (!dati.risultati.length) {
@@ -319,26 +438,33 @@ VISTE.weekend = async function (giorno) {
       o importa il catalogo se e' vuoto.</div>`;
   }
 
+  /* Un elenco raggruppato: una superficie sola, righe separate da filetti.
+     Prima erano schede staccate, e con dodici gite la pagina diventava una
+     colonna di scatole in cui l'occhio non trovava piu' la riga. */
+  if (dati.risultati.length) h += `<div class="gruppo">`;
   for (const r of dati.risultati) {
     const gr = r.valanghe_grado;
-    h += `<div class="card click" onclick="vai('gita',{id:${r.gita.id},giorno:'${dati.giorno}'})">
-      <div class="riga">
-        <div style="min-width:0">
-          <div class="titolo">${esc(r.gita.nome)}</div>
-          <div class="meta">${esc(r.gita.valle || r.gita.comune || "")}
-            ${r.gita.dislivello ? " &middot; " + r.gita.dislivello + " m D+" : ""}
-            ${r.gita.difficolta ? " &middot; " + esc(r.gita.difficolta) : ""}</div>
-        </div>
-        <div class="center">
-          <div class="neve-cm">${r.neve.ha_nevicato ? Math.round(r.neve.neve_72h_cm) + " cm" : "&mdash;"}</div>
-          <div class="hint" style="font-size:10.5px">72h</div>
-          ${gr ? `<div class="grado" style="justify-content:center;margin-top:6px">
-            <span class="pallino g${gr}"></span>${gr}</div>` : ""}
-        </div>
+    const cm = r.neve.ha_nevicato ? Math.round(r.neve.neve_72h_cm) : null;
+    h += `<div class="voce" onclick="vai('gita',{id:${r.gita.id},giorno:'${dati.giorno}'})">
+      <div class="corpo">
+        <div class="titolo">${esc(r.gita.nome)}</div>
+        <div class="meta">${esc(r.gita.valle || r.gita.comune || "")}
+          ${r.gita.dislivello ? " &middot; " + r.gita.dislivello + " m D+" : ""}
+          ${r.gita.difficolta ? " &middot; " + esc(r.gita.difficolta) : ""}</div>
+        ${r.neve.descrizione ? `<div class="meta" style="color:var(--terziario)">
+          ${esc(r.neve.descrizione)}</div>` : ""}
       </div>
-      <div class="meta" style="margin-top:7px">${esc(r.neve.descrizione || "")}</div>
+      <div class="coda">
+        <div class="neve-cm">${cm !== null
+          ? cm + `<span> cm</span>`
+          : `<span class="niente">&mdash;</span>`}</div>
+        ${gr ? `<div class="grado" style="font-size:13px">
+          <span class="pallino g${gr}" style="width:15px;height:15px;border-radius:4px"></span>${gr}</div>` : ""}
+      </div>
+      ${FRECCIA}
     </div>`;
   }
+  if (dati.risultati.length) h += `</div>`;
   if (dati.risultati.some(r => r.neve.ha_nevicato)) {
     h += `<div class="avviso grave">${esc(dati.avvertenza_neve || "")}</div>`;
   }
@@ -357,14 +483,18 @@ VISTE.gite = async function () {
   const dati = await api("/gite?limite=200");
   const valli = await api("/valli");
   let h = `<div class="wrap"><h1>Catalogo</h1>
-    <input id="cerca" placeholder="Cerca una gita o un comune..." autocomplete="off">
-    <div style="margin-top:10px">
+    <div class="hint">${dati.totale} itinerari, da fonti aperte.</div>
+    <input id="cerca" placeholder="Cerca una gita o un comune..." autocomplete="off"
+      style="margin-top:12px">
+    <div class="tag-riga" style="margin-top:10px">
       <span class="tag" data-valle="">tutte (${dati.totale})</span>
       ${valli.map(v => `<span class="tag" data-valle="${esc(v.valle)}">${esc(v.valle)} (${v.gite})</span>`).join("")}
     </div>
     <div id="lista" class="sez"></div>
-    <button class="secondario" style="width:100%;margin-top:16px" onclick="vai('nuovaGita')">
-      + Aggiungi una gita che manca</button>
+    <div style="padding:0 var(--lato);margin-top:16px">
+      <button class="secondario" style="width:100%" onclick="vai('nuovaGita')">
+        + Aggiungi una gita che manca</button>
+    </div>
   </div>`;
   el.innerHTML = h;
   disegnaGite(dati.gite);
@@ -388,13 +518,16 @@ function disegnaGite(gite) {
   const lista = document.getElementById("lista");
   if (!lista) return;
   if (!gite.length) { lista.innerHTML = '<div class="vuoto">Nessuna gita.</div>'; return; }
-  lista.innerHTML = gite.map(g => `
-    <div class="card click" onclick="vai('gita',${g.id})">
-      <div class="titolo">${esc(g.nome)}</div>
-      <div class="meta">${esc(g.comune || "")}${g.valle ? " &middot; " + esc(g.valle) : ""}
-        ${g.dislivello ? " &middot; " + g.dislivello + " m D+" : ""}
-        ${g.difficolta ? " &middot; " + esc(g.difficolta) : ""}</div>
-    </div>`).join("");
+  lista.innerHTML = `<div class="gruppo">` + gite.map(g => `
+    <div class="voce" onclick="vai('gita',${g.id})">
+      <div class="corpo">
+        <div class="titolo">${esc(g.nome)}</div>
+        <div class="meta">${esc(g.comune || "")}${g.valle ? " &middot; " + esc(g.valle) : ""}
+          ${g.dislivello ? " &middot; " + g.dislivello + " m D+" : ""}
+          ${g.difficolta ? " &middot; " + esc(g.difficolta) : ""}</div>
+      </div>
+      ${FRECCIA}
+    </div>`).join("") + `</div>`;
 }
 
 /* ------------------------------------------------------------ scheda gita */
@@ -425,7 +558,7 @@ VISTE.gita = async function (arg) {
         onclick="vai('gita',{id:${g.id},giorno:'${d}'})">
         <b>${dataIt(d).split(" ")[0]}</b>${dataIt(d).split(" ").slice(1).join(" ")}</div>`).join("")}
     </div>
-    <div>
+    <div class="tag-riga">
       ${g.quota_min ? `<span class="tag">attacco ${g.quota_min} m</span>` : ""}
       ${g.quota_max ? `<span class="tag">cima ${g.quota_max} m</span>` : ""}
       ${g.dislivello ? `<span class="tag">${g.dislivello} m D+</span>` : ""}
@@ -435,6 +568,9 @@ VISTE.gita = async function (arg) {
 
   /* --- avvicinamento: quanto ci metti, e da dove passi --- */
   h += `<div id="avvicinamento"></div>`;
+
+  /* --- all'attacco: parcheggi (con la capienza) e ripari --- */
+  h += `<div id="posti"></div>`;
 
   /* --- neve --- */
   if (n.disponibile) {
@@ -459,7 +595,10 @@ VISTE.gita = async function (arg) {
     h += `<div class="card"><div class="hint">Bollettino non disponibile qui
       (fuori stagione o regione non coperta).</div>
       <a href="${v.link_ufficiale}" target="_blank" style="display:inline-block;margin-top:8px">
-      Apri il bollettino ufficiale &rarr;</a></div>`;
+      Apri il bollettino ufficiale &rarr;</a>
+      <div><a href="#" onclick="vai('sapere');return false"
+        style="display:inline-block;margin-top:6px">Come si legge un
+        bollettino &rarr;</a></div></div>`;
   } else {
     const gr = v.grado_massimo;
     h += `<div class="card">
@@ -486,7 +625,10 @@ VISTE.gita = async function (arg) {
     </div>`;
     h += `<div class="avviso">Questo e' un estratto. <b>Il bollettino va letto
       per intero prima di uscire</b>: l'app non dice quali problemi riguardino
-      questa gita, e non e' in grado di dirlo.</div>`;
+      questa gita, e non e' in grado di dirlo.
+      <a href="#" onclick="vai('sapere');return false"
+        style="display:inline-block;margin-top:6px">Come si legge un
+        bollettino &rarr;</a></div>`;
   }
 
   /* --- previsione --- */
@@ -499,6 +641,12 @@ VISTE.gita = async function (arg) {
         <div class="hint" style="font-size:10.5px">${d.quota_zero ? "0&deg; " + Math.round(d.quota_zero) + "m" : ""}</div>
       </div>`).join("") + `</div>`;
   }
+
+  /* --- com'era: le condizioni viste da chi c'e' stato --- */
+  h += `<div id="segnalazioni"></div>`;
+
+  /* --- dopo la gita: le piole lungo la strada di casa --- */
+  h += `<div id="piole"></div>`;
 
   /* --- azioni --- */
   // il nome passa per una variabile, non interpolato nell'HTML: gite come
@@ -523,7 +671,9 @@ VISTE.gita = async function (arg) {
         <input type="date" id="data-fatta" max="${oggi}" value="${oggi}">
         <label>Nota per te (facoltativa)</label>
         <input id="nota-fatta" maxlength="500"
-          placeholder="neve trasformata, ghiaccio nel canale...">
+          placeholder="com'e' andata, con chi, cosa rifarei...">
+        <div class="hint">Com'era la neve raccontalo sopra, in
+          &laquo;Com'era&raquo;: quello lo leggono gli altri. Questo no.</div>
         <button class="secondario" style="margin-top:10px" id="segna-fatta">
           Segna nel diario</button>
         <div id="esito-fatta"></div>
@@ -560,8 +710,191 @@ VISTE.gita = async function (arg) {
     }
   });
 
-  // non si attende: la scheda e' gia' a schermo e questo arriva dopo
+  // non si attendono: la scheda e' gia' a schermo e questi arrivano dopo
   disegnaAvvicinamento(g.id);
+  disegnaSegnalazioni(g.id);
+  disegnaPosti(g, m.tramonto);
+};
+
+/* --------------------------------------------- condizioni viste (segnalazioni)
+
+   Il vocabolario delle etichette arriva dal server (app/segnalazioni.py):
+   qui non si scrive nessuna etichetta a mano, altrimenti fra sei mesi ce ne
+   sarebbero due elenchi diversi e uno dei due sbagliato.
+
+   E' chiuso di proposito: un campo libero, in questo posto, diventa in
+   fretta "tranquilla, si va" - la frase che fa partire qualcuno senza
+   leggere il bollettino. Vedi il commento in cima a app/segnalazioni.py. */
+
+const SEGN = { neve: new Set(), accesso: new Set(), traccia: null };
+
+function pillole(gruppo, voci) {
+  return Object.entries(voci || {}).map(([k, t]) =>
+    `<button type="button" class="pillola" data-gruppo="${gruppo}"
+      data-chiave="${esc(k)}">${esc(t)}</button>`).join("");
+}
+
+function cartaSegnalazione(s) {
+  return `<div class="card${s.fresca ? "" : " vecchia"}">
+    <div class="riga">
+      <div style="min-width:0">
+        <div class="titolo" style="font-size:14.5px">${esc(s.quando)}
+          <span class="hint" style="font-weight:400">&middot; ${dataIt(s.giorno)}</span></div>
+        <div style="margin-top:6px">${s.etichette.map(e =>
+          `<span class="tag">${esc(e)}</span>`).join("")}</div>
+        ${s.nota ? `<div class="meta" style="margin-top:6px">&laquo;${esc(s.nota)}&raquo;</div>` : ""}
+        <div class="meta" style="margin-top:6px">${esc(s.autore?.nome || "qualcuno")}</div>
+        ${rigaEsperienza(s.autore)}
+      </div>
+      ${s.mia ? `<button class="secondario" style="padding:5px 9px;font-size:12px"
+        onclick="togliSegnalazione(${s.id})">togli</button>` : ""}
+    </div>
+    ${s.fresca ? "" : `<div class="hint" style="margin-top:8px">Sono passati
+      ${s.giorni_fa} giorni: con una notte di vento o un rialzo termico la
+      neve che trovi non e' questa.</div>`}
+  </div>`;
+}
+
+async function disegnaSegnalazioni(gitaId) {
+  const box = document.getElementById("segnalazioni");
+  if (!box) return;
+  let d;
+  try {
+    d = await api("/segnalazioni/" + gitaId);
+  } catch (e) {
+    box.innerHTML = "";     // e' un di piu': la scheda resta completa
+    return;
+  }
+  if (!box.isConnected) return;    // schermata gia' cambiata
+
+  const voc = d.vocabolario || {};
+  SEGN.neve = new Set(); SEGN.accesso = new Set(); SEGN.traccia = null;
+
+  const oggi = new Date().toISOString().slice(0, 10);
+  // oltre questa data il server rifiuta: la neve di allora non c'e' piu'
+  const primo = new Date();
+  primo.setDate(primo.getDate() - (voc.giorni_validi || 30));
+  const daQuando = primo.toISOString().slice(0, 10);
+
+  let h = `<h2>Com'era</h2>`;
+  if (!d.segnalazioni.length) {
+    h += `<div class="card"><div class="hint">Nessuno ha ancora raccontato
+      com'era, in queste settimane. Il bollettino dice com'e' il manto su
+      mezza valle: se la strada era aperta fino all'attacco lo sa solo chi
+      c'e' passato.</div></div>`;
+  } else {
+    h += d.segnalazioni.map(cartaSegnalazione).join("");
+  }
+
+  if (!fuoriDaTelegram()) {
+    h += `<div class="card" style="margin-top:14px">
+      <div class="titolo" style="font-size:15px">Racconta com'era</div>
+      <label>Quando ci sei stato</label>
+      <input type="date" id="sg-giorno" value="${oggi}" min="${daQuando}" max="${oggi}">
+
+      <label>Com'era la neve</label>
+      <div class="pillole" id="sg-neve">${pillole("neve", voc.neve)}</div>
+      <div class="hint" id="sg-neve-nota">Al massimo ${voc.max_neve || 3}:
+        se scegli tutto non hai detto niente.</div>
+
+      <label>A che quota cambiava, se cambiava</label>
+      <input type="number" id="sg-quota" inputmode="numeric" placeholder="facoltativo, es. 2100"
+        min="${voc.quota_min || 500}" max="${voc.quota_max || 3400}">
+
+      <label>La traccia</label>
+      <div class="pillole" id="sg-traccia">${pillole("traccia", voc.traccia)}</div>
+
+      <label>La strada e il parcheggio</label>
+      <div class="pillole" id="sg-accesso">${pillole("accesso", voc.accesso)}</div>
+
+      <label>Una nota, se serve</label>
+      <input id="sg-nota" maxlength="${voc.max_nota || 140}"
+        placeholder="un dettaglio che le etichette non dicono...">
+      <div class="hint" id="sg-conta">${voc.max_nota || 140} caratteri.
+        Serve a raccontare cosa hai visto, non a dare consigli.</div>
+
+      <div class="avviso" style="margin-top:12px">${esc(voc.avvertenza || "")}</div>
+      <button class="primario" id="sg-invia">Racconta com'era</button>
+      <div id="sg-esito"></div>
+      <div class="hint">La vedranno gli altri sulla scheda della gita, col tuo
+        nome e la data. Se hai gia' raccontato questo giorno, la tua
+        segnalazione viene aggiornata.</div>
+    </div>`;
+  }
+  box.innerHTML = h;
+  if (fuoriDaTelegram()) return;
+
+  /* le pillole: nessun onclick nell'HTML, cosi' le etichette che arrivano
+     dal server non finiscono mai dentro una stringa JavaScript */
+  box.querySelectorAll(".pillola").forEach(b => b.addEventListener("click", () => {
+    const g = b.dataset.gruppo, k = b.dataset.chiave;
+    haptic();
+    if (g === "traccia") {                        // una sola risposta
+      SEGN.traccia = SEGN.traccia === k ? null : k;
+      box.querySelectorAll('[data-gruppo="traccia"]').forEach(x =>
+        x.classList.toggle("on", x.dataset.chiave === SEGN.traccia));
+      return;
+    }
+    const insieme = SEGN[g];
+    if (insieme.has(k)) {
+      insieme.delete(k);
+    } else {
+      const max = g === "neve" ? (voc.max_neve || 3) : 99;
+      if (insieme.size >= max) {
+        avviso("sg-esito", `Al massimo ${max} etichette per la neve: `
+          + "togline una, se vuoi cambiarla.");
+        return;
+      }
+      insieme.add(k);
+    }
+    b.classList.toggle("on", insieme.has(k));
+    avviso("sg-esito", "");
+  }));
+
+  const nota = document.getElementById("sg-nota");
+  const conta = document.getElementById("sg-conta");
+  nota.addEventListener("input", () => {
+    const restano = (voc.max_nota || 140) - nota.value.length;
+    conta.textContent = `${restano} caratteri. Serve a raccontare cosa hai `
+      + "visto, non a dare consigli.";
+  });
+
+  const bottone = document.getElementById("sg-invia");
+  bottone.addEventListener("click", async () => {
+    const corpo = {
+      gita_id: gitaId,
+      giorno: document.getElementById("sg-giorno").value,
+      neve: [...SEGN.neve],
+      traccia: SEGN.traccia,
+      accesso: [...SEGN.accesso],
+      quota_cambio: valoreNumero("sg-quota"),
+      nota: valore("sg-nota"),
+    };
+    bottone.disabled = true;
+    try {
+      const r = await api("/segnalazioni", { method: "POST", body: JSON.stringify(corpo) });
+      haptic();
+      // prima si ridisegna (la nuova segnalazione compare in cima), POI si
+      // scrive l'esito: nell'ordine inverso il ridisegno cancellerebbe il
+      // messaggio e l'utente non saprebbe se e' andata
+      await disegnaSegnalazioni(gitaId);
+      avviso("sg-esito", r.aggiornata ? "Aggiornata, grazie." : "Grazie: e' online.", "ok");
+    } catch (e) {
+      avviso("sg-esito", e.message);
+      bottone.disabled = false;
+    }
+  });
+}
+
+window.togliSegnalazione = async function (id) {
+  const box = document.getElementById("segnalazioni");
+  try {
+    await api("/segnalazioni/" + id, { method: "DELETE" });
+    haptic();
+    if (GITA_CORRENTE) disegnaSegnalazioni(GITA_CORRENTE.id);
+  } catch (e) {
+    if (box) avviso("sg-esito", e.message);
+  }
 };
 
 /* Il diario privato. La riga che conta e' il commento sul modello Fatta:
@@ -615,6 +948,272 @@ window.scordaFatta = async function (id) {
   } catch (e) { /* si rilegge riaprendo il profilo */ }
 };
 
+/* --------------------------------------------------------- emergenza
+
+   La schermata piu' importante dell'app e' quella che si spera di non
+   aprire mai. Due principi, e sono l'opposto di come e' fatto tutto il
+   resto:
+
+   1. DEVE FUNZIONARE SENZA RETE. In valle il campo non c'e', ed e'
+      esattamente il momento in cui serve. Quindi: niente chiamate al
+      server. I ripari e l'ora del tramonto si scaricano PRIMA, quando si
+      apre la scheda di una gita e la rete c'e' ancora, e si tengono nel
+      telefono. La posizione la da' il GPS, che funziona anche senza campo.
+   2. LA POSIZIONE NON ESCE DA QUI. Non la mandiamo al nostro server: il
+      riparo piu' vicino lo calcola il telefono sui dati che ha gia'. Il
+      solo momento in cui la posizione se ne va e' quando la persona tocca
+      "prepara il messaggio" - e a quel punto e' Telegram a chiedere a chi,
+      e a farla premere invio. */
+
+const CHIAVE_EMERGENZA = "ndoma.emergenza";
+
+function leggiEmergenza() {
+  try {
+    return JSON.parse(localStorage.getItem(CHIAVE_EMERGENZA) || "null");
+  } catch (e) {
+    return null;   /* finestra privata, dati bloccati: si va avanti senza */
+  }
+}
+
+/* Si tiene da parte quello che in emergenza non si potrebbe scaricare.
+   I ripari si accumulano fra una scheda e l'altra: chi ha guardato tre
+   gite della valle ha in tasca i ripari di tutte tre. */
+function ricordaPerEmergenza(gita, ripari, tramonto) {
+  try {
+    const vecchio = leggiEmergenza() || {};
+    const per_url = new Map();
+    for (const r of (vecchio.ripari || []).concat(ripari || [])) {
+      if (r && r.osm_url) per_url.set(r.osm_url, r);
+    }
+    localStorage.setItem(CHIAVE_EMERGENZA, JSON.stringify({
+      quando: Date.now(),
+      gita: { nome: gita.nome, lat: gita.lat, lon: gita.lon },
+      tramonto: tramonto || vecchio.tramonto || null,
+      ripari: [...per_url.values()].slice(-40),
+    }));
+  } catch (e) { /* niente da fare: la schermata funziona anche senza */ }
+}
+
+function distanzaKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (lat2 - lat1) * r, dLon = (lon2 - lon1) * r;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+const PUNTI = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
+
+function direzione(lat1, lon1, lat2, lon2) {
+  const r = Math.PI / 180;
+  const y = Math.sin((lon2 - lon1) * r) * Math.cos(lat2 * r);
+  const x = Math.cos(lat1 * r) * Math.sin(lat2 * r)
+    - Math.sin(lat1 * r) * Math.cos(lat2 * r) * Math.cos((lon2 - lon1) * r);
+  const gradi = (Math.atan2(y, x) / r + 360) % 360;
+  return PUNTI[Math.round(gradi / 45) % 8];
+}
+
+VISTE.emergenza = async function () {
+  const salvato = leggiEmergenza();
+  const ripari = salvato?.ripari || [];
+
+  el.innerHTML = `<div class="wrap">
+    <button class="torna" onclick="vai('profilo')">&larr; profilo</button>
+    <h1>Emergenza</h1>
+    <div class="hint">Funziona senza rete: la posizione la da' il GPS e i
+      ripari sono gia' nel telefono. Solo la chiamata ha bisogno di campo.</div>
+
+    <h2>Da dettare al centralinista</h2>
+    <div class="card" id="box-posizione">
+      <div class="gps cerca"><span class="led"></span>Cerco il GPS...</div>
+      <div class="coord" style="margin-top:10px">--.-----<br>--.-----</div>
+      <div class="hint" style="margin-top:8px">gradi decimali, WGS84</div>
+    </div>
+    <div class="scelte" style="margin-top:0">
+      <button id="copia">Copia</button>
+      <button id="condividi">Prepara il messaggio</button>
+    </div>
+    <div id="esito-copia"></div>
+
+    <h2>Chiamare</h2>
+    <a class="sos" href="tel:112" style="text-decoration:none">
+      <svg viewBox="0 0 24 24"><path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6.5 6.5L17 13l4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4 5.2 2 2 0 0 1 6.5 3Z"/></svg>
+      <div><div class="n">Chiama 112</div>
+        <div class="d">Numero unico europeo per le emergenze</div></div>
+    </a>
+    <div class="card"><div class="hint">Il segnale nelle valli chiuse spesso
+      non c'e': migliora sui crinali e verso i paesi. Se non hai campo prova a
+      salire di quota prima di rinunciare. <b>Una chiamata al 112 parte anche
+      con la rete di un altro operatore</b>, quindi vale la pena provare
+      comunque.</div></div>
+
+    <h2>Al riparo piu' vicino</h2>
+    <div id="box-ripari"></div>
+
+    <h2>Primo soccorso</h2>
+    <div class="gruppo">
+      <div class="voce" onclick="apriFuori('https://www.aineva.it/')">
+        <div class="corpo"><div class="titolo" style="font-size:15.5px">Autosoccorso in valanga &mdash; AINEVA</div></div>
+        ${FRECCIA}
+      </div>
+      <div class="voce" onclick="apriFuori('https://www.cai.it/')">
+        <div class="corpo"><div class="titolo" style="font-size:15.5px">Le guide del CAI</div></div>
+        ${FRECCIA}
+      </div>
+    </div>
+    <div class="disclaimer">Le manovre di primo soccorso non le scriviamo noi:
+      si rimanda a chi le insegna e le tiene aggiornate. Quello che fa l'app,
+      qui, e' darti la posizione esatta da dettare e il numero da chiamare.
+      ${salvato ? `<br><br>Ripari salvati: ${ripari.length}, aggiornati il
+        ${new Date(salvato.quando).toLocaleDateString("it-IT")}.`
+      : `<br><br><b>Nessun riparo salvato.</b> Apri la scheda di una gita
+        quando hai campo: i ripari intorno vengono scaricati e restano qui.`}
+    </div>
+  </div>`;
+
+  disegnaRipari(ripari);
+  seguiPosizione(ripari);
+
+  document.getElementById("copia").addEventListener("click", async () => {
+    if (!POSIZIONE) { avviso("esito-copia", "Non ho ancora la posizione."); return; }
+    const t = testoPosizione();
+    try {
+      await navigator.clipboard.writeText(t);
+      haptic();
+      avviso("esito-copia", "Copiato.", "ok");
+    } catch (e) {
+      avviso("esito-copia", "Non riesco a copiare. Le coordinate sono qui sopra.");
+    }
+  });
+
+  document.getElementById("condividi").addEventListener("click", () => {
+    if (!POSIZIONE) { avviso("esito-copia", "Non ho ancora la posizione."); return; }
+    // Telegram apre l'elenco delle chat: a chi mandarlo, e l'invio, li
+    // decide la persona. Noi prepariamo solo il testo.
+    const url = "https://t.me/share/url?url="
+      + encodeURIComponent(`https://www.openstreetmap.org/?mlat=${POSIZIONE.lat}&mlon=${POSIZIONE.lon}#map=15/${POSIZIONE.lat}/${POSIZIONE.lon}`)
+      + "&text=" + encodeURIComponent(testoPosizione());
+    haptic();
+    if (TG?.openTelegramLink) TG.openTelegramLink(url);
+    else window.open(url, "_blank");
+  });
+};
+
+window.apriFuori = function (url) {
+  if (TG?.openLink) TG.openLink(url); else window.open(url, "_blank");
+};
+
+function testoPosizione() {
+  const p = POSIZIONE;
+  const righe = [
+    `Sono a ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`,
+    `precisione ${Math.round(p.precisione)} m`,
+  ];
+  if (p.quota) righe.push(`quota ${Math.round(p.quota)} m`);
+  righe.push(`(Ndoma a skie', ${new Date().toLocaleTimeString("it-IT").slice(0, 5)})`);
+  return righe.join(" - ");
+}
+
+function seguiPosizione(ripari) {
+  const box = document.getElementById("box-posizione");
+  if (!box) return;
+  if (!navigator.geolocation) {
+    box.innerHTML = `<div class="gps no"><span class="led"></span>
+      Questo telefono non da' la posizione</div>
+      <div class="hint" style="margin-top:8px">Il 112 qui sopra funziona
+      comunque: il centralinista puo' localizzarti lui.</div>`;
+    return;
+  }
+  if (SORVEGLIANZA !== null) navigator.geolocation.clearWatch(SORVEGLIANZA);
+  SORVEGLIANZA = navigator.geolocation.watchPosition(
+    (pos) => {
+      POSIZIONE = {
+        lat: pos.coords.latitude, lon: pos.coords.longitude,
+        precisione: pos.coords.accuracy, quota: pos.coords.altitude,
+      };
+      disegnaPosizione();
+      disegnaRipari(ripari);
+    },
+    (err) => {
+      if (!box.isConnected) return;
+      box.innerHTML = `<div class="gps no"><span class="led"></span>
+        Posizione non disponibile</div>
+        <div class="hint" style="margin-top:8px">${err.code === 1
+          ? "Il permesso e' stato negato: si concede dalle impostazioni del telefono."
+          : "Sotto una parete o in un bosco fitto il GPS puo' metterci un minuto. Resta fermo all'aperto."}
+        <br>Il 112 funziona comunque.</div>`;
+    },
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
+  );
+}
+
+async function disegnaPosizione() {
+  const box = document.getElementById("box-posizione");
+  if (!box || !box.isConnected || !POSIZIONE) return;
+  const p = POSIZIONE;
+  const buono = p.precisione <= 25;
+  const salvato = leggiEmergenza();
+
+  let batteria = null;
+  try {
+    if (navigator.getBattery) {
+      const b = await navigator.getBattery();
+      batteria = Math.round(b.level * 100);
+    }
+  } catch (e) { /* Safari non lo espone: si mostra il resto */ }
+
+  box.innerHTML = `
+    <div class="gps ${buono ? "" : "cerca"}"><span class="led"></span>
+      ${buono ? "GPS fisso" : "GPS impreciso"} &middot;
+      &plusmn;${Math.round(p.precisione)} m</div>
+    <div class="coord" style="margin-top:10px">${p.lat.toFixed(5)}<br>${p.lon.toFixed(5)}</div>
+    <div class="hint" style="margin-top:8px">gradi decimali, WGS84 &mdash;
+      leggile cifra per cifra</div>
+    <div class="dato">
+      <div><div class="k">Quota</div>
+        <div class="v">${p.quota ? Math.round(p.quota) + " m" : "&mdash;"}</div></div>
+      ${batteria !== null ? `<div><div class="k">Batteria</div>
+        <div class="v">${batteria}%</div></div>` : ""}
+      ${salvato?.tramonto ? `<div><div class="k">Tramonto</div>
+        <div class="v">${esc(salvato.tramonto)}</div></div>` : ""}
+    </div>`;
+}
+
+function disegnaRipari(ripari) {
+  const box = document.getElementById("box-ripari");
+  if (!box || !box.isConnected) return;
+  if (!ripari.length) {
+    box.innerHTML = `<div class="card"><div class="hint">Nessun riparo
+      salvato. Si scaricano da soli quando apri la scheda di una gita con
+      il campo: da quel momento restano qui anche senza rete.</div></div>`;
+    return;
+  }
+  let elenco = ripari.map(r => ({ ...r }));
+  if (POSIZIONE) {
+    for (const r of elenco) {
+      r.km = distanzaKm(POSIZIONE.lat, POSIZIONE.lon, r.lat, r.lon);
+      r.dir = direzione(POSIZIONE.lat, POSIZIONE.lon, r.lat, r.lon);
+      r.dislivello = r.quota && POSIZIONE.quota
+        ? Math.round(r.quota - POSIZIONE.quota) : null;
+    }
+    elenco.sort((a, b) => a.km - b.km);
+  }
+  box.innerHTML = `<div class="gruppo">
+    ${elenco.slice(0, 4).map(r => `<div class="voce" style="cursor:default">
+      <div class="corpo">
+        <div class="titolo" style="font-size:15.5px">${esc(r.etichetta || r.nome || "Riparo")}</div>
+        <div class="meta">${esc(r.genere || "")}
+          ${r.km !== undefined ? ` &middot; ${r.km.toFixed(1)} km ${r.dir}` : ""}
+          ${r.dislivello ? ` &middot; ${r.dislivello > 0 ? "+" : ""}${r.dislivello} m` : ""}</div>
+      </div>
+    </div>`).join("")}
+  </div>
+  <div class="hint" style="padding:0 var(--lato)">Da OpenStreetMap, scaricati
+    con le schede delle gite. Le distanze sono in linea d'aria: <b>in montagna
+    la strada e' sempre piu' lunga</b>, e di notte o con la nebbia molto di
+    piu'.</div>`;
+}
+
 /* ------------------------------------------------------------- sapere */
 
 /* Rimandi a chi sa, non copie di cio' che sa.
@@ -661,7 +1260,11 @@ const SAPERE = [
 ];
 
 VISTE.sapere = async function () {
-  let h = `<div class="wrap"><h1>Sapere</h1>
+  // non e' piu' una voce della barra: ci si arriva dal profilo o dai rimandi
+  // dentro la scheda gita, quindi serve un modo di tornare indietro
+  let h = `<div class="wrap">
+    <button class="torna" onclick="vai('profilo')">&larr; profilo</button>
+    <h1>Sapere</h1>
     <div class="hint">Quello che serve per decidere una gita non sta in
       quest'app: sta sui siti di chi emette i bollettini e di chi insegna.
       Qui ci sono i rimandi, aggiornati da loro.</div>`;
@@ -669,12 +1272,18 @@ VISTE.sapere = async function () {
   for (const sez of SAPERE) {
     h += `<h2>${esc(sez.titolo)}</h2>
       <div class="hint" style="margin:-4px 0 8px">${esc(sez.nota)}</div>`;
+    h += `<div class="gruppo">`;
     for (const [nome, url, spiega] of sez.voci) {
-      h += `<a class="card click" href="${esc(url)}" target="_blank" rel="noopener"
-        style="display:block;text-decoration:none">
-        <div class="titolo">${esc(nome)} &nearr;</div>
-        <div class="meta">${esc(spiega)}</div></a>`;
+      h += `<a class="voce" href="${esc(url)}" target="_blank" rel="noopener"
+        style="text-decoration:none;color:inherit">
+        <div class="corpo">
+          <div class="titolo" style="font-size:15.5px">${esc(nome)}</div>
+          <div class="meta">${esc(spiega)}</div>
+        </div>
+        ${FRECCIA}
+      </a>`;
     }
+    h += `</div>`;
   }
 
   h += `<h2>Cosa fa quest'app, e cosa non fa</h2>
@@ -990,10 +1599,28 @@ VISTE.profilo = async function () {
   let h = `<div class="wrap"><h1>Profilo</h1>
     <div class="hint">Le preferenze si salvano una volta: dopo, pubblicare
       un'uscita sono due tap.</div>
-    <div class="card" style="margin:12px 0 18px">
+    <div class="card" style="margin:12px var(--lato) 18px">
       <div class="hint">Come ti vedono gli altri</div>
       <div class="esperienza${PROFILO.esperienza_dichiarata ? "" : " assente"}"
         style="margin-top:4px">${esc(PROFILO.esperienza)}</div>
+    </div>
+    <div class="gruppo" style="margin-bottom:18px">
+      <div class="voce" onclick="vai('emergenza')">
+        <div class="corpo">
+          <div class="titolo" style="font-size:15.5px">Emergenza</div>
+          <div class="meta">Coordinate da dettare al 112, ripari vicini.
+            Funziona senza rete.</div>
+        </div>
+        ${FRECCIA}
+      </div>
+      <div class="voce" onclick="vai('sapere')">
+        <div class="corpo">
+          <div class="titolo" style="font-size:15.5px">Sapere e utilita'</div>
+          <div class="meta">Bollettini ufficiali, la scala del pericolo, dove
+            si impara. E cosa fa quest'app, e cosa non fa.</div>
+        </div>
+        ${FRECCIA}
+      </div>
     </div>
     <label>Parto abitualmente da</label>
     <input id="comune" autocomplete="off" value="${esc(PROFILO.comune_partenza || "")}">

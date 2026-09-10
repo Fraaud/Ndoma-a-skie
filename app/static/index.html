@@ -16,12 +16,22 @@
 
   <main id="vista"><div class="carico">Carico...</div></main>
 
+  <!-- Quattro voci, non cinque. Sapere sta nel Profilo e nei rimandi dentro
+       la scheda gita: e' roba che si legge una volta, e teneva occupato un
+       quinto della barra per sempre. -->
   <nav>
-    <button data-vista="weekend" class="on"><span class="ico">&#9968;</span>Weekend</button>
-    <button data-vista="gite"><span class="ico">&#128506;</span>Gite</button>
-    <button data-vista="passaggi"><span class="ico">&#128663;</span>Passaggi</button>
-    <button data-vista="sapere"><span class="ico">&#128218;</span>Sapere</button>
-    <button data-vista="profilo"><span class="ico">&#128100;</span>Profilo</button>
+    <button data-vista="weekend" class="on">
+      <svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 19 11 6l3 6 2-3 4 10"/></svg>
+      Weekend</button>
+    <button data-vista="gite">
+      <svg viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2Z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg>
+      Gite</button>
+    <button data-vista="passaggi">
+      <svg viewBox="0 0 24 24"><path d="M5 17h14"/><path d="M6 17v2"/><path d="M18 17v2"/><path d="M4 17v-4l2-5h12l2 5v4"/><path d="M7 13h10"/></svg>
+      Passaggi</button>
+    <button data-vista="profilo">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.4 3.1-5.5 7-5.5s7 2.1 7 5.5"/></svg>
+      Profilo</button>
   </nav>
 
   <script src="/static/app.js"></script>

@@ -103,3 +103,72 @@ def test_lo_script_di_avvio_tiene_solo_le_cifre(tmp_path):
         testo = f.read()
     assert "tail -n 1" in testo and "tr -cd '0-9'" in testo, (
         "la funzione conta() dello script di avvio deve filtrare l'output")
+
+
+# --------------------------------------------- l'endpoint di manutenzione
+
+def test_manutenzione_spenta_se_manca_il_token(monkeypatch):
+    """Chi non la usa non deve avere una porta in piu' da difendere."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.delenv("TOKEN_MANUTENZIONE", raising=False)
+    assert TestClient(app).post("/api/aggiorna").status_code == 404
+
+
+def test_manutenzione_rifiuta_un_token_sbagliato(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setenv("TOKEN_MANUTENZIONE", "quello-giusto")
+    c = TestClient(app)
+    assert c.post("/api/aggiorna").status_code == 403
+    assert c.post("/api/aggiorna",
+                  headers={"X-Manutenzione": "quello-sbagliato"}).status_code == 403
+
+
+def test_manutenzione_accetta_il_token_giusto(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import main as m
+
+    monkeypatch.setenv("TOKEN_MANUTENZIONE", "quello-giusto")
+
+    partito = []
+
+    async def finto():
+        partito.append(True)
+
+    monkeypatch.setattr(m, "_aggiorna_in_sottofondo", finto)
+    r = TestClient(m.app).post("/api/aggiorna",
+                               headers={"X-Manutenzione": "quello-giusto"})
+    assert r.status_code == 200
+    assert r.json()["stato"] == "avviato"
+    assert partito == [True]
+
+
+def test_manutenzione_non_lancia_due_aggiornamenti_insieme(monkeypatch):
+    """Sono centinaia di chiamate a un servizio gratuito: una alla volta."""
+    from fastapi.testclient import TestClient
+
+    from app import main as m
+
+    monkeypatch.setenv("TOKEN_MANUTENZIONE", "quello-giusto")
+    monkeypatch.setattr(m, "_aggiornamento_in_corso", True)
+    r = TestClient(m.app).post("/api/aggiorna",
+                               headers={"X-Manutenzione": "quello-giusto"})
+    assert r.json()["stato"] == "gia_in_corso"
+
+
+def test_il_token_non_va_nellindirizzo():
+    """Un segreto in un URL finisce nei log, nella cronologia e nei referrer.
+    Se un domani qualcuno lo spostasse in query string, questo test cade."""
+    import inspect
+
+    from app import main as m
+
+    codice = inspect.getsource(m.aggiorna_adesso)
+    assert "Header" in codice
+    assert "Query" not in codice

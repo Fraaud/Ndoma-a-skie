@@ -76,3 +76,23 @@ def utente_corrente(
         if cambiato:
             db.commit()
     return u
+
+
+def utente_facoltativo(
+    x_telegram_init_data: str = Header(default=""),
+    db: Session = Depends(get_db),
+) -> Utente | None:
+    """Chi sta guardando, se si riesce a saperlo. Altrimenti None.
+
+    Serve alle letture che devono funzionare anche da fuori Telegram: la
+    scheda di una gita si sfoglia dal browser, e non puo' rispondere 401
+    solo perche' non sa chi sei. Qui non si concede niente in piu': la
+    firma, quando c'e', viene verificata dalla stessa funzione di sopra.
+    Chi SCRIVE passa da utente_corrente, che la pretende.
+    """
+    if not x_telegram_init_data or not settings.telegram_bot_token:
+        return None
+    try:
+        return utente_corrente(x_telegram_init_data, db)
+    except HTTPException:
+        return None

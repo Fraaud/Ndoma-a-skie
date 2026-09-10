@@ -1,157 +1,293 @@
+/* Ndoma a skié — foglio di stile unico.
+
+   Linguaggio: quello di iOS. Tipografia di sistema, fondo raggruppato con
+   superfici bianche sopra, elenchi in un contenitore solo separati da
+   filetti, un accento blu e un ambra per l'attenzione. Non e' vezzo: chi
+   apre questa app la apre dentro Telegram su un telefono, e le convenzioni
+   del telefono sono quelle che non deve imparare.
+
+   DUE COSE DA NON TOCCARE SENZA AVER LETTO
+   ----------------------------------------
+   1. I colori della scala EAWS (.g1-.g5) sono lo standard europeo del
+      pericolo valanghe, non una nostra scelta estetica. Il grado 5 ha il
+      bordo nero perche' lo prevede lo standard. Non si armonizzano con la
+      palette: si lasciano esattamente come sono.
+   2. La corrispondenza fra i colori di Telegram e i nostri si INVERTE fra
+      chiaro e scuro, e sembra un errore mentre non lo e'. Nel tema chiaro
+      la pagina e' grigia e le schede bianche, quindi pagina =
+      secondary_bg e scheda = bg. Nel tema scuro Telegram fa il contrario -
+      bg (#17212b) e' piu' scuro di secondary_bg (#232e3c) - e per avere
+      schede piu' chiare della pagina, come su iOS, i due vanno scambiati.
+*/
+
 :root{
-  --bg: var(--tg-theme-bg-color, #ffffff);
-  --bg2: var(--tg-theme-secondary-bg-color, #f2f3f5);
-  --fg: var(--tg-theme-text-color, #10151c);
-  --hint: var(--tg-theme-hint-color, #7d8894);
-  --link: var(--tg-theme-link-color, #2b6cb0);
-  --btn: var(--tg-theme-button-color, #2b6cb0);
-  --btn-fg: var(--tg-theme-button-text-color, #ffffff);
-  --bordo: color-mix(in srgb, var(--hint) 25%, transparent);
-  --radius: 14px;
+  --fondo:      var(--tg-theme-secondary-bg-color, #F2F2F7);
+  --scheda:     var(--tg-theme-bg-color, #FFFFFF);
+  --testo:      var(--tg-theme-text-color, #11161C);
+  --secondario: var(--tg-theme-hint-color, #6E7076);
+  --terziario:  color-mix(in srgb, var(--secondario) 72%, transparent);
+  --accento:    var(--tg-theme-button-color, #3A6FCB);
+  --accento-fg: var(--tg-theme-button-text-color, #FFFFFF);
+  --accento-tenue: color-mix(in srgb, var(--accento) 12%, var(--scheda));
+  --filetto:    color-mix(in srgb, var(--secondario) 20%, transparent);
+  --bordo:      color-mix(in srgb, var(--secondario) 26%, transparent);
+  --r:          16px;   /* raggio delle schede */
+  --r-piccolo:  12px;
+  --lato:       16px;   /* margine laterale, uno per tutta l'app */
 }
+
+/* Vedi la nota 2 in cima: nel tema scuro le due superfici si scambiano.
+   Si scambiano anche i COLORI DI RIPIEGO del testo, e non e' un dettaglio:
+   dentro Telegram vincono comunque le variabili del tema, ma chi apre
+   l'app dal browser col telefono in modalita' scura si trovava schede
+   scure con sopra il testo nero. */
+@media (prefers-color-scheme: dark){
+  :root{
+    --fondo:      var(--tg-theme-bg-color, #000000);
+    --scheda:     var(--tg-theme-secondary-bg-color, #1C1C1E);
+    --testo:      var(--tg-theme-text-color, #F2F2F7);
+    --secondario: var(--tg-theme-hint-color, #98989F);
+  }
+}
+
 *{box-sizing:border-box}
 body{
-  margin:0;background:var(--bg);color:var(--fg);
-  font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  padding-bottom:74px;
+  margin:0;background:var(--fondo);color:var(--testo);
+  font:15px/1.45 -apple-system,"SF Pro Text",BlinkMacSystemFont,system-ui,
+       "Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:86px;   /* la barra in basso */
 }
-a{color:var(--link);text-decoration:none}
-.wrap{padding:12px 14px}
-h1{font-size:19px;margin:2px 0 12px}
-h2{font-size:16px;margin:18px 0 8px}
-.hint{color:var(--hint);font-size:13px}
+a{color:var(--accento);text-decoration:none;font-weight:560}
+.wrap{padding:8px 0 20px}
+
+/* --- titoli ---
+   Large title come nelle app di sistema: il nome della schermata si legge
+   una volta, in grande, e poi si scorre. */
+h1{
+  font-size:33px;font-weight:700;letter-spacing:-.6px;line-height:1.1;
+  margin:8px 0 2px;padding:0 var(--lato);
+}
+h1 + .hint{padding:0 var(--lato);margin:0 0 6px;font-size:15px}
+h2{
+  font-size:13px;font-weight:620;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--secondario);margin:22px 0 8px;padding:0 var(--lato);
+}
+.hint{color:var(--secondario);font-size:13px}
 .center{text-align:center}
 
-/* --- barra inferiore --- */
+/* Il margine laterale sta sui singoli blocchi (schede, campi, titoli), non
+   su .wrap: cosi' una scheda puo' andare a filo e un elenco raggruppato
+   puo' avere i filetti che arrivano al bordo. I blocchi di testo che stanno
+   da soli sulla pagina, invece, il margine lo devono chiedere - questa
+   riga e' l'elenco di chi lo chiede. */
+h1 + .hint, h2 + .hint,
+.wrap > .hint, .wrap > .meta, .wrap > .tag-riga,
+#diario > .hint, #segnalazioni > .hint, #avvicinamento > .hint,
+#lista > .hint, #posti > .hint, #blocco-prova > .hint{
+  padding-left:var(--lato);padding-right:var(--lato);
+}
+.tag-riga{padding-bottom:2px}
+
+/* --- barra in basso --- */
 nav{
-  position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);
-  border-top:1px solid var(--bordo);padding:6px 0 10px;z-index:50;
+  position:fixed;left:0;right:0;bottom:0;display:flex;z-index:50;
+  background:color-mix(in srgb, var(--scheda) 94%, transparent);
+  backdrop-filter:saturate(180%) blur(14px);
+  border-top:1px solid var(--filetto);
+  padding:7px 0 calc(10px + env(safe-area-inset-bottom));
 }
 nav button{
-  flex:1;background:none;border:0;color:var(--hint);font-size:11px;
-  display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;cursor:pointer;
+  flex:1;background:none;border:0;color:var(--secondario);font:inherit;
+  font-size:10.5px;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:2px 0;cursor:pointer;
 }
-nav button .ico{font-size:18px;line-height:1}
-nav button.on{color:var(--link);font-weight:600}
+nav button svg{width:25px;height:25px;stroke:var(--secondario);fill:none;
+  stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+nav button.on{color:var(--accento);font-weight:600}
+nav button.on svg{stroke:var(--accento)}
 
-/* --- schede --- */
+/* --- schede e gruppi ---
+   .card = una superficie sola. .gruppo = un elenco di righe dentro una
+   superficie sola, separate da filetti, come le tabelle di iOS. */
 .card{
-  background:var(--bg2);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;
-  border:1px solid transparent;
+  background:var(--scheda);border-radius:var(--r);padding:13px 14px;
+  margin:0 var(--lato) 10px;
 }
-.card.click{cursor:pointer}
-.card.click:active{border-color:var(--bordo)}
+.card.click{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.card.click:active{background:color-mix(in srgb, var(--testo) 5%, var(--scheda))}
+
+.gruppo{
+  background:var(--scheda);border-radius:var(--r);overflow:hidden;
+  margin:0 var(--lato) 10px;
+}
+.voce{
+  display:flex;gap:12px;align-items:center;padding:12px 14px;min-height:44px;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.voce:active{background:color-mix(in srgb, var(--testo) 5%, var(--scheda))}
+/* il filetto rientrato di 14px: e' il dettaglio che fa leggere l'elenco
+   come un elenco invece che come tante scatole */
+.voce + .voce{box-shadow:inset 0 1px 0 var(--filetto)}
+.voce .corpo{flex:1;min-width:0}
+.voce .coda{flex:0 0 auto;display:flex;flex-direction:column;
+  align-items:flex-end;gap:5px}
+.freccia{flex:0 0 auto;width:8px;height:14px;stroke:var(--terziario);
+  fill:none;stroke-width:2;stroke-linecap:round}
+
 .riga{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.titolo{font-weight:650;font-size:15px}
-.meta{color:var(--hint);font-size:12.5px;margin-top:3px}
+.titolo{font-weight:600;font-size:16.5px;letter-spacing:-.2px}
+.meta{color:var(--secondario);font-size:13px;margin-top:2px}
 .tag{
-  display:inline-block;background:var(--bg);border:1px solid var(--bordo);
-  border-radius:999px;padding:2px 9px;font-size:11.5px;margin:3px 4px 0 0;color:var(--hint);
+  display:inline-block;background:var(--fondo);border-radius:999px;
+  padding:4px 10px;font-size:12px;margin:4px 5px 0 0;color:var(--secondario);
 }
 
-/* --- powder --- */
-.neve-cm{font-size:17px;font-weight:700;white-space:nowrap;color:#2b8ac6}
-.powder-box{background:var(--bg2);border-radius:var(--radius);padding:14px}
-.powder-num{font-size:30px;font-weight:700;line-height:1}
-.fattori{margin:10px 0 0;padding-left:18px}
-.fattori li{font-size:13px;color:var(--hint);margin:3px 0}
+/* --- neve --- */
+.neve-cm{font-size:21px;font-weight:660;letter-spacing:-.4px;
+  white-space:nowrap;color:#2C6BB5}
+.neve-cm span{font-size:13px;font-weight:560;color:var(--secondario)}
+/* "niente neve" non e' un dato in evidenza: e' l'assenza di un dato, e in
+   blu grosso sembrava un valore */
+.neve-cm .niente{font-size:16px;font-weight:560;color:var(--terziario)}
+.powder-box{background:var(--scheda);border-radius:var(--r);padding:15px 14px;
+  margin:0 var(--lato)}
+.powder-num{font-size:32px;font-weight:700;line-height:1;letter-spacing:-.8px}
 
-/* --- pericolo valanghe (colori ufficiali EAWS) --- */
-.grado{display:inline-flex;align-items:center;gap:7px;font-weight:650;font-size:14px}
-.pallino{width:22px;height:22px;border-radius:6px;border:1px solid rgba(0,0,0,.25);display:inline-block}
+/* --- pericolo valanghe: colori ufficiali EAWS, vedi la nota 1 --- */
+.grado{display:inline-flex;align-items:center;gap:7px;font-weight:620;font-size:14px}
+.pallino{width:20px;height:20px;border-radius:5px;
+  border:1px solid rgba(0,0,0,.25);display:inline-block}
 .g1{background:#ccff66}.g2{background:#ffff00}.g3{background:#ff9900}
 .g4{background:#ff0000}.g5{background:#ff0000;border:3px solid #000}
 .g0{background:#dcdcdc}
 
+/* --- avvisi --- */
 .avviso{
-  background:#fff4e5;color:#5c3a00;border-left:4px solid #ff9900;
-  border-radius:8px;padding:10px 12px;font-size:13.5px;margin:10px 0;
+  background:#FFF4E6;color:#6B4409;border-radius:var(--r);
+  padding:13px 14px;font-size:13px;line-height:1.42;margin:12px var(--lato);
 }
-.avviso.grave{background:#ffeaea;color:#5c0000;border-left-color:#e02020}
+.avviso.grave{background:#FDECEA;color:#7A2016}
+.avviso.ok{background:#E9F6EE;color:#1F5C35}
+.avviso b{font-weight:640}
 @media (prefers-color-scheme: dark){
-  .avviso{background:#3a2a10;color:#ffd9a0}
-  .avviso.grave{background:#3a1616;color:#ffc9c9}
+  .avviso{background:#3A2A10;color:#FFD9A0}
+  .avviso.grave{background:#3A1616;color:#FFC9C9}
+  .avviso.ok{background:#12301E;color:#B7E6C7}
 }
-.disclaimer{font-size:11.5px;color:var(--hint);margin-top:14px;line-height:1.4}
+.disclaimer{font-size:11.5px;color:var(--terziario);line-height:1.45;
+  padding:12px var(--lato) 0}
+/* dentro una scheda il margine laterale della pagina e' gia' stato speso:
+   riapplicarlo rientrerebbe l'avviso di sedici pixel in piu' */
+.card .avviso{margin:12px 0}
+.card .disclaimer{padding:10px 0 0}
 
 /* --- mappa --- */
-#mappa,.mappa{height:210px;border-radius:var(--radius);margin-bottom:12px;z-index:1}
+#mappa,.mappa{height:190px;border-radius:var(--r);margin:0 var(--lato) 12px;
+  z-index:1;overflow:hidden}
 
-/* --- form --- */
-label{display:block;font-size:12.5px;color:var(--hint);margin:12px 0 5px}
+/* --- moduli --- */
+label{display:block;font-size:13px;color:var(--secondario);
+  margin:14px var(--lato) 6px}
 input,select,textarea{
-  width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--bordo);
-  background:var(--bg);color:var(--fg);font-size:15px;font-family:inherit;
+  width:calc(100% - var(--lato) * 2);margin:0 var(--lato);
+  padding:12px 13px;border-radius:var(--r-piccolo);border:0;
+  background:var(--scheda);color:var(--testo);
+  font-size:16px;font-family:inherit;  /* 16px: sotto, iOS zooma da solo */
 }
-textarea{min-height:70px;resize:vertical}
+input:focus,select:focus,textarea:focus{
+  outline:2px solid color-mix(in srgb, var(--accento) 45%, transparent);
+  outline-offset:-2px;
+}
+textarea{min-height:76px;resize:vertical}
+/* dentro una scheda i campi non hanno il margine laterale della pagina */
+.card input,.card select,.card textarea{width:100%;margin:0}
+.card label{margin:12px 0 6px}
+
 button.primario{
-  width:100%;background:var(--btn);color:var(--btn-fg);border:0;border-radius:11px;
-  padding:14px;font-size:15px;font-weight:650;margin-top:18px;cursor:pointer;
+  width:calc(100% - var(--lato) * 2);margin:18px var(--lato) 0;
+  background:var(--accento);color:var(--accento-fg);border:0;
+  border-radius:14px;padding:15px;font:inherit;font-size:16.5px;font-weight:620;
+  cursor:pointer;
 }
+button.primario:disabled{opacity:.55}
+.card button.primario{width:100%;margin:16px 0 0}
 button.secondario{
-  background:var(--bg2);color:var(--fg);border:1px solid var(--bordo);border-radius:10px;
-  padding:10px 14px;font-size:14px;cursor:pointer;
+  background:var(--accento-tenue);color:var(--accento);border:0;
+  border-radius:var(--r-piccolo);padding:11px 15px;font:inherit;font-size:14.5px;
+  font-weight:600;cursor:pointer;min-height:44px;
 }
-.scelte{display:flex;gap:8px;margin-top:6px}
+.scelte{display:flex;gap:8px;margin:6px var(--lato) 0}
 .scelte button{
-  flex:1;padding:11px 6px;border-radius:10px;border:1px solid var(--bordo);
-  background:var(--bg);color:var(--fg);font-size:13px;cursor:pointer;
+  flex:1;padding:12px 6px;border-radius:var(--r-piccolo);border:0;
+  background:var(--scheda);color:var(--testo);font:inherit;font-size:13.5px;
+  cursor:pointer;min-height:44px;
 }
-.scelte button.on{background:var(--btn);color:var(--btn-fg);border-color:var(--btn);font-weight:600}
-.suggerimenti{background:var(--bg2);border-radius:10px;margin-top:4px;overflow:hidden}
-.suggerimenti div{padding:10px 12px;border-bottom:1px solid var(--bordo);cursor:pointer;font-size:14px}
-.suggerimenti div:last-child{border:0}
+.scelte button.on{background:var(--accento);color:var(--accento-fg);font-weight:600}
+.card .scelte{margin:6px 0 0}
+.suggerimenti{background:var(--scheda);border-radius:var(--r-piccolo);
+  margin:4px var(--lato) 0;overflow:hidden}
+.suggerimenti div{padding:12px 14px;cursor:pointer;font-size:15px;min-height:44px}
+.suggerimenti div + div{box-shadow:inset 0 1px 0 var(--filetto)}
 
-/* --- previsioni --- */
-.giorni{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+/* --- previsioni: i riquadri dentro la scheda gita --- */
+.giorni{display:flex;gap:8px;overflow-x:auto;padding:0 var(--lato) 4px;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.giorni::-webkit-scrollbar{display:none}
 .giorno{
-  min-width:74px;background:var(--bg2);border-radius:11px;padding:9px 7px;text-align:center;
-  font-size:12px;flex:0 0 auto;
+  min-width:74px;background:var(--scheda);border-radius:14px;padding:10px 8px;
+  text-align:center;font-size:12.5px;flex:0 0 auto;
 }
-.giorno b{display:block;font-size:12.5px;margin-bottom:4px;text-transform:capitalize}
-.neve{color:#2b8ac6;font-weight:650}
+.giorno b{display:block;font-size:12.5px;margin-bottom:4px;
+  text-transform:capitalize;font-weight:600}
+.neve{color:#2C6BB5;font-weight:620}
 
-.vuoto{text-align:center;color:var(--hint);padding:40px 20px;font-size:14px}
-.torna{background:none;border:0;color:var(--link);font-size:14px;padding:0 0 10px;cursor:pointer}
-.carico{text-align:center;padding:36px;color:var(--hint)}
-.sez{margin-top:20px}
-.badge-tipo{font-size:11px;font-weight:700;letter-spacing:.4px;padding:3px 8px;border-radius:6px}
-.t-OFFRO{background:#d8f0dd;color:#14532d}
-.t-CERCO{background:#dbe7fb;color:#1e3a8a}
-.t-COMPAGNI{background:#f3e2fb;color:#581c87}
+.vuoto{text-align:center;color:var(--secondario);padding:44px 24px;font-size:14px}
+.torna{background:none;border:0;color:var(--accento);font:inherit;font-size:16px;
+  padding:6px var(--lato) 2px;cursor:pointer;display:flex;align-items:center;gap:3px}
+.carico{text-align:center;padding:40px;color:var(--secondario)}
+.sez{margin-top:18px}
+.badge-tipo{font-size:11px;font-weight:700;letter-spacing:.4px;
+  padding:3px 8px;border-radius:6px}
+.t-OFFRO{background:#D8F0DD;color:#14532D}
+.t-CERCO{background:#DBE7FB;color:#1E3A8A}
+.t-COMPAGNI{background:#F3E2FB;color:#581C87}
 @media (prefers-color-scheme: dark){
-  .t-OFFRO{background:#14361f;color:#a8e6bb}
-  .t-CERCO{background:#16233f;color:#a9c6f5}
-  .t-COMPAGNI{background:#2e1638;color:#e0b9f5}
+  .t-OFFRO{background:#14361F;color:#A8E6BB}
+  .t-CERCO{background:#16233F;color:#A9C6F5}
+  .t-COMPAGNI{background:#2E1638;color:#E0B9F5}
 }
-.match{border-left:3px solid var(--btn);padding-left:10px;margin-top:8px}
+.match{border-left:3px solid var(--accento);padding-left:11px;margin-top:10px}
 
-/* --- striscia dei giorni: scorre di lato col dito ---
+/* --- striscia dei giorni (vista Weekend) ---
    Classe a parte da .giorni, che era gia' usata per i riquadri dentro la
    scheda gita: riusarla gli avrebbe cambiato i margini sotto il naso. */
 .striscia{
-  display:flex;gap:8px;margin:0 -14px 14px;padding:2px 14px 8px;
+  display:flex;gap:8px;padding:10px var(--lato) 14px;
   overflow-x:auto;scroll-snap-type:x proximity;
   -webkit-overflow-scrolling:touch;scrollbar-width:none;
 }
 .striscia::-webkit-scrollbar{display:none}
 .striscia button{
   flex:0 0 auto;scroll-snap-align:center;
-  width:52px;padding:7px 0;border:1px solid var(--bordo);border-radius:12px;
-  background:var(--bg2);color:var(--fg);font:inherit;line-height:1.15;
-  display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;
+  width:52px;height:60px;border:1px solid var(--filetto);border-radius:14px;
+  background:var(--scheda);color:var(--testo);font:inherit;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:1px;cursor:pointer;
 }
-.striscia button .gs{font-size:11px;color:var(--hint);text-transform:lowercase}
-.striscia button .gn{font-size:17px;font-weight:600}
+.striscia button .gs{font-size:11px;color:var(--terziario);text-transform:lowercase}
+.striscia button .gn{font-size:19px;font-weight:620}
 /* sabato e domenica leggermente in evidenza: e' quando si va */
-.striscia button.fine .gs{color:var(--fg)}
-.striscia button.on{background:var(--btn);border-color:var(--btn)}
-.striscia button.on .gs,.striscia button.on .gn{color:var(--btn-fg)}
+.striscia button.fine{border-color:var(--bordo)}
+.striscia button.fine .gs{color:var(--testo);font-weight:560}
+.striscia button.on{background:var(--accento);border-color:var(--accento)}
+.striscia button.on .gs{color:color-mix(in srgb, var(--accento-fg) 80%, transparent)}
+.striscia button.on .gn{color:var(--accento-fg);font-weight:680}
 
 /* --- esperienza dichiarata --- */
 .esperienza{
-  color:var(--hint);font-size:12.5px;margin-top:5px;
-  border-left:2px solid var(--bordo);padding-left:7px;
+  color:var(--secondario);font-size:12.5px;margin-top:5px;
+  border-left:2px solid var(--filetto);padding-left:8px;
 }
 .esperienza.assente{font-style:italic;opacity:.75}
 
@@ -161,24 +297,72 @@ button.secondario{
 /* --- fascia dei dati di prova: fissa, in cima, non si chiude --- */
 #fascia-simulazione{
   position:fixed;top:0;left:0;right:0;z-index:60;
-  padding:9px 14px;padding-top:calc(9px + env(safe-area-inset-top));
-  background:#8a2f0f;color:#fff;
+  padding:11px var(--lato);padding-top:calc(11px + env(safe-area-inset-top));
+  background:#8A2F17;color:#FFF3EF;
   font-size:12.5px;line-height:1.35;font-weight:500;
-  box-shadow:0 1px 6px rgba(0,0,0,.25);
 }
 
 /* --- rosa delle esposizioni --- */
 .problema{
-  display:flex;gap:11px;align-items:center;
-  padding:9px 0;border-top:1px solid var(--bordo);
+  display:flex;gap:12px;align-items:center;
+  padding:10px 0;box-shadow:inset 0 1px 0 var(--filetto);
 }
-.problema:first-of-type{border-top:0;padding-top:2px}
+.problema:first-of-type{box-shadow:none;padding-top:2px}
 .rosa{flex:0 0 auto}
-.rosa-set{fill:var(--bordo);stroke:var(--bg);stroke-width:1}
+.rosa-set{fill:var(--filetto);stroke:var(--scheda);stroke-width:1}
 /* le esposizioni che il bollettino indica: stesso arancione dei gradi */
-.rosa-set.on{fill:#e08a2e}
-.rosa-buco{fill:var(--bg)}
-.rosa-txt{
-  fill:var(--hint);font-size:9px;font-weight:600;
-  text-anchor:middle;font-family:inherit;
+.rosa-set.on{fill:#E08A2E}
+.rosa-buco{fill:var(--scheda)}
+.rosa-txt{fill:var(--terziario);font-size:9px;font-weight:600;
+  text-anchor:middle;font-family:inherit}
+
+/* --- pillole delle condizioni viste ---
+   Il tocco deve essere di almeno 44px: si usano col guanto, in macchina,
+   dopo una gita. Vanno a capo da sole, cosi' funzionano con qualunque
+   numero di etichette senza fissare una griglia. */
+.pillole{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.pillole .pillola{
+  flex:0 0 auto;min-height:40px;padding:10px 14px;
+  border:1px solid var(--bordo);border-radius:999px;
+  background:var(--scheda);color:var(--testo);font:inherit;font-size:13.5px;
+  cursor:pointer;
 }
+.pillole .pillola.on{
+  background:var(--accento);border-color:var(--accento);
+  color:var(--accento-fg);font-weight:600;
+}
+
+/* Una segnalazione vecchia si vede, ma si vede che e' vecchia: la neve
+   cambia in una notte, e mostrarla come fosse di ieri sarebbe peggio che
+   non mostrarla. */
+.card.vecchia{opacity:.72}
+
+/* --- parcheggi: la capienza e' il dato che nessun'altra app mostra --- */
+.posti-num{font-size:19px;font-weight:660;letter-spacing:-.3px;white-space:nowrap}
+.posti-num span{font-size:12.5px;font-weight:560;color:var(--secondario)}
+.posti-num.ignota{font-size:13px;font-weight:560;color:var(--terziario)}
+
+/* --- emergenza ---
+   Le coordinate si dettano al telefono a uno che le scrive: cifre grandi,
+   spaziate, in un carattere in cui 1 e 7 non si confondono. */
+.coord{
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  font-size:30px;font-weight:620;letter-spacing:.5px;line-height:1.25;
+}
+.sos{
+  display:flex;align-items:center;gap:13px;margin:0 var(--lato) 10px;
+  background:#C0281C;border-radius:var(--r);padding:14px 18px;min-height:62px;
+  border:0;width:calc(100% - var(--lato) * 2);cursor:pointer;text-align:left;
+}
+.sos .n{font-size:21px;font-weight:700;color:#fff;letter-spacing:-.2px}
+.sos .d{font-size:12.5px;color:#FBD9D5}
+.sos svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+.dato{display:flex;gap:22px;margin-top:14px}
+.dato .k{font-size:11.5px;color:var(--terziario)}
+.dato .v{font-size:16px;font-weight:600;margin-top:2px}
+.gps{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:560}
+.gps .led{width:7px;height:7px;border-radius:999px;background:#1F9D4D;
+  display:inline-block}
+.gps.cerca .led{background:#E08A2E}
+.gps.no .led{background:#C0281C}

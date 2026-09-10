@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hmac
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,12 +18,14 @@ from sqlalchemy.orm import Session
 
 from app import esperienza
 from app import notifiche as notifiche_srv
-from app import archivio, schede, simulazione
-from app.auth import utente_corrente
+from app import archivio, posti, schede, segnalazioni, simulazione
+from app.auth import utente_corrente, utente_facoltativo
 from app.config import settings
 from app.db import get_db, init_db
 from app.geo import comune_di, distanza_km
-from app.models import Comune, Condizioni, Fatta, Gita, Match, Uscita, Utente
+from app.models import (
+    Comune, Condizioni, Fatta, Gita, Match, Posto, Segnalazione, Uscita, Utente,
+)
 from app.services import match as match_srv
 from app.services import neve as neve_srv
 from app.services import routing as routing_srv
@@ -518,8 +521,16 @@ async def avvicinamento(
                         u.lat_partenza, u.lon_partenza, g.id)
         return {"stato": "in_calcolo"}
 
+    corridoio = list(p.comuni_istat or [])
     nomi = {c.istat: c.nome
-            for c in db.query(Comune).filter(Comune.istat.in_(p.comuni_istat or [])).all()}
+            for c in db.query(Comune).filter(Comune.istat.in_(corridoio)).all()}
+
+    # Le piole si cercano sul RITORNO: il corridoio si legge al contrario,
+    # cosi' i paesi arrivano nell'ordine in cui li incontri tornando a casa.
+    # Il paese della gita si salta: alle cinque di sera, a 1600 m, non c'e'
+    # niente di aperto - la piola dove ci si ferma e' in fondovalle.
+    ritorno = list(reversed(corridoio))
+    piole = posti.in_comuni(db, ritorno, limite=8)
     return {
         "stato": "pronto",
         "da": u.comune_partenza,
@@ -528,7 +539,9 @@ async def avvicinamento(
         # Senza chiave di routing il percorso e' una retta: i minuti non
         # esistono e i paesi sono un'approssimazione. Va detto, non nascosto.
         "stimato": p.minuti is None,
-        "comuni": [nomi.get(i, i) for i in (p.comuni_istat or [])],
+        "comuni": [nomi.get(i, i) for i in corridoio],
+        "piole": [{**posti.posto_dict(x), "comune": nomi.get(x.istat or "", "")}
+                  for x in piole],
     }
 
 
@@ -605,6 +618,214 @@ def cancella_fatta(fatta_id: int, u: Utente = Depends(utente_corrente),
     db.delete(f)
     db.commit()
     return {"cancellata": True}
+
+
+# ------------------------------------------------- parcheggi, ripari, piole
+
+
+@app.get("/api/posti/{gita_id}")
+def posti_della_gita(gita_id: int, db: Session = Depends(get_db)):
+    """Cosa c'e' all'attacco: parcheggi (con la capienza) e ripari.
+
+    I ripari li mandiamo anche quando nessuno li ha chiesti, e l'app li
+    tiene da parte: servono in Emergenza, e in Emergenza il telefono e'
+    probabilmente senza campo. Scaricarli quando la rete c'e' ancora e'
+    l'unico modo di averli quando serve.
+    """
+    g = db.get(Gita, gita_id)
+    if not g:
+        raise HTTPException(404, "gita non trovata")
+
+    parcheggi = posti.vicini(db, g.lat, g.lon, "parcheggio",
+                             posti.RAGGIO_PARCHEGGIO, limite=5)
+    ripari = posti.vicini(db, g.lat, g.lon, "riparo",
+                          posti.RAGGIO_RIPARO, limite=6)
+    return {
+        "parcheggi": [posti.posto_dict(p, d) for p, d in parcheggi],
+        "ripari": [posti.posto_dict(p, d) for p, d in ripari],
+        "attribuzione": posti.ATTRIBUZIONE,
+        # le distanze sono in linea d'aria: in montagna la strada e' sempre
+        # piu' lunga, e va detto invece di far credere il contrario
+        "avvertenza": "Distanze in linea d'aria. La capienza e' quella "
+                      "dichiarata su OpenStreetMap: puo' essere vecchia, e "
+                      "in inverno un parcheggio non spalato ha meno posti.",
+    }
+
+
+# ------------------------------------------------------- condizioni viste
+#
+# Il vocabolario e' chiuso e sta in app/segnalazioni.py: la ragione per cui
+# e' chiuso e' scritta li' in cima, e vale la pena leggerla prima di
+# aggiungere un'etichetta.
+
+
+class NuovaSegnalazione(BaseModel):
+    gita_id: int
+    giorno: str
+    neve: list[str] = Field(default_factory=list)
+    traccia: Optional[str] = None
+    accesso: list[str] = Field(default_factory=list)
+    quota_cambio: Optional[int] = None
+    nota: Optional[str] = None
+
+
+def _segnalazione_dict(s: Segnalazione, autore: Utente | None,
+                       oggi: dt.date | None = None) -> dict:
+    g = segnalazioni.giorni_fa(s.giorno, oggi)
+    return {
+        "id": s.id,
+        "giorno": s.giorno.isoformat(),
+        "giorni_fa": g,
+        "quando": segnalazioni.quando(g),
+        # la neve cambia in una notte di vento: l'app lo dice invece di
+        # presentare una segnalazione di dieci giorni come fosse di ieri
+        "fresca": g <= segnalazioni.GIORNI_FRESCA,
+        "neve": s.neve or [],
+        "traccia": s.traccia,
+        "accesso": s.accesso or [],
+        "quota_cambio": s.quota_cambio,
+        "nota": s.nota,
+        "etichette": segnalazioni.etichette(s),
+        "autore": {"nome": autore.nome, "username": autore.username,
+                   "esperienza": esperienza.riassunto(autore)} if autore else None,
+        "mia": False,
+    }
+
+
+@app.get("/api/segnalazioni/{gita_id}")
+def elenco_segnalazioni(gita_id: int, db: Session = Depends(get_db),
+                        io: Optional[Utente] = Depends(utente_facoltativo)):
+    """Le condizioni viste sulla gita, dalla piu' recente.
+
+    Si leggono anche da fuori Telegram (chi sfoglia dal browser vede la
+    scheda intera), quindi qui l'autenticazione e' facoltativa: sapere chi
+    guarda serve solo a marcare le sue, e se non si sa pazienza.
+    """
+    limite = dt.date.today() - dt.timedelta(days=segnalazioni.GIORNI_VALIDI)
+    righe = (db.query(Segnalazione)
+             .filter(Segnalazione.gita_id == gita_id, Segnalazione.giorno >= limite)
+             .order_by(Segnalazione.giorno.desc(), Segnalazione.id.desc())
+             .limit(20).all())
+    autori = {u.id: u for u in db.query(Utente).filter(
+        Utente.id.in_([s.utente_id for s in righe] or [0])).all()}
+
+    fuori = []
+    for s in righe:
+        d = _segnalazione_dict(s, autori.get(s.utente_id))
+        d["mia"] = bool(io and s.utente_id == io.id)
+        fuori.append(d)
+    return {"segnalazioni": fuori, "vocabolario": segnalazioni.VOCABOLARIO}
+
+
+@app.post("/api/segnalazioni")
+def scrivi_segnalazione(dati: NuovaSegnalazione,
+                        u: Utente = Depends(utente_corrente),
+                        db: Session = Depends(get_db)):
+    if not db.get(Gita, dati.gita_id):
+        raise HTTPException(404, "gita non trovata")
+    giorno = dt.date.fromisoformat(dati.giorno)
+    if giorno > dt.date.today():
+        raise HTTPException(400, "non puoi raccontare un giorno che non c'e' ancora stato")
+    if segnalazioni.giorni_fa(giorno) > segnalazioni.GIORNI_VALIDI:
+        raise HTTPException(400, "troppo tempo fa: la neve di allora non c'e' piu'")
+
+    pulita = segnalazioni.pulisci(dati.model_dump())
+    if segnalazioni.vuota(pulita):
+        raise HTTPException(400, "scegli almeno un'etichetta, o scrivi una nota")
+
+    s = (db.query(Segnalazione)
+         .filter_by(utente_id=u.id, gita_id=dati.gita_id, giorno=giorno).one_or_none())
+    nuova = s is None
+    if nuova:
+        s = Segnalazione(utente_id=u.id, gita_id=dati.gita_id, giorno=giorno)
+        db.add(s)
+    for campo, valore in pulita.items():
+        setattr(s, campo, valore)
+    s.aggiornato_il = dt.datetime.now(dt.timezone.utc)
+    db.commit()
+    db.refresh(s)
+    d = _segnalazione_dict(s, u)
+    d["mia"] = True
+    d["aggiornata"] = not nuova
+    return d
+
+
+@app.delete("/api/segnalazioni/{segnalazione_id}")
+def cancella_segnalazione(segnalazione_id: int, u: Utente = Depends(utente_corrente),
+                          db: Session = Depends(get_db)):
+    # come per il diario, il filtro sull'utente E' la sicurezza
+    s = (db.query(Segnalazione)
+         .filter_by(id=segnalazione_id, utente_id=u.id).one_or_none())
+    if not s:
+        raise HTTPException(404, "non trovata")
+    db.delete(s)
+    db.commit()
+    return {"cancellata": True}
+
+
+# ------------------------------------------------------------ manutenzione
+
+# Un aggiornamento alla volta: il lavoro dura minuti e fa centinaia di
+# chiamate a Open-Meteo. Lanciarne due in parallelo vorrebbe dire raddoppiare
+# il traffico verso un servizio gratuito, per riscrivere le stesse righe.
+_aggiornamento_in_corso = False
+
+
+@app.post("/api/aggiorna")
+async def aggiorna_adesso(
+    sfondo: BackgroundTasks,
+    x_manutenzione: str = Header(default=""),
+):
+    """Forza l'aggiornamento di meteo, bollettini e condizioni.
+
+    Perche' esiste: su Railway non c'e' una shell nel pannello (serve la CLI,
+    quindi un computer) e il comando pre-deploy gira in un container a parte
+    col volume SMONTATO, quindi non puo' scrivere il database. Senza questo
+    endpoint, l'unico modo di ricaricare i dati e' aspettare il lavoro delle
+    quattro del mattino - anche quando si e' appena cambiata una
+    configurazione e si vorrebbe vedere l'effetto subito.
+
+    Il token sta in un'INTESTAZIONE e non nell'indirizzo: un segreto in un
+    URL finisce nei log del server, nella cronologia del browser e nei
+    referrer. Se TOKEN_MANUTENZIONE non e' impostato l'endpoint non esiste,
+    cosi' chi non lo usa non ha una porta in piu' da difendere.
+    """
+    atteso = os.getenv("TOKEN_MANUTENZIONE", "")
+    if not atteso:
+        raise HTTPException(404, "manutenzione non abilitata")
+    # confronto a tempo costante: un == normale perde il segreto un carattere
+    # alla volta, misurando quanto tempo ci mette a rispondere
+    if not hmac.compare_digest(x_manutenzione, atteso):
+        raise HTTPException(403, "token di manutenzione non valido")
+
+    global _aggiornamento_in_corso
+    if _aggiornamento_in_corso:
+        return {"stato": "gia_in_corso"}
+
+    sfondo.add_task(_aggiorna_in_sottofondo)
+    g = simulazione.giorno()
+    return {
+        "stato": "avviato",
+        "cosa": f"simulazione del {g}" if g else "dati di oggi",
+        "come_seguirlo": "GET /api/salute, e la vista Weekend quando finisce",
+    }
+
+
+async def _aggiorna_in_sottofondo() -> None:
+    from app.aggiornamento import aggiorna_tutto
+    from app.db import SessionLocal
+
+    global _aggiornamento_in_corso
+    _aggiornamento_in_corso = True
+    db = SessionLocal()
+    try:
+        c = await aggiorna_tutto(db, verboso=True)
+        print(f"aggiornamento a richiesta: {c}")
+    except Exception as e:
+        print(f"aggiornamento a richiesta fallito: {e}")
+    finally:
+        _aggiornamento_in_corso = False
+        db.close()
 
 
 # --------------------------------------------------------- notifiche bot

@@ -220,6 +220,77 @@ class CacheBollettino(Base):
     aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
 
+class Posto(Base):
+    """Un punto preso da OpenStreetMap: parcheggio, riparo o piola.
+
+    Tre cose diverse in una tabella sola perche' vengono dalla stessa
+    interrogazione, si aggiornano insieme e servono nello stesso modo:
+    "cosa c'e' vicino a questo punto". Il campo `tipo` le distingue.
+
+    Il campo che conta piu' di tutti e' `capienza` sui parcheggi. L'app e'
+    nata da sei macchine ferme in un piazzale: sapere quanti posti ha quel
+    piazzale e' il dato piu' nostro che esista.
+
+    `istat` e' il comune in cui cade il punto, e serve per le piole: quelle
+    si cercano lungo il corridoio del ritorno, cioe' fra i comuni che il
+    percorso attraversa - non "vicino all'attacco", dove non c'e' niente.
+    """
+
+    __tablename__ = "posti"
+    __table_args__ = (UniqueConstraint("fonte", "fonte_id", name="uq_posto_fonte"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tipo: Mapped[str] = mapped_column(String(16), index=True)  # parcheggio|riparo|piola
+    fonte: Mapped[str] = mapped_column(String(16), default="osm")
+    fonte_id: Mapped[str] = mapped_column(String(40))          # "node/123456"
+
+    nome: Mapped[Optional[str]] = mapped_column(String(160))
+    lat: Mapped[float] = mapped_column(Float, index=True)
+    lon: Mapped[float] = mapped_column(Float, index=True)
+    quota: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # solo sui parcheggi. None = OSM non lo dice, e non lo inventiamo noi.
+    capienza: Mapped[Optional[int]] = mapped_column(Integer)
+    # solo sui ripari: gestito, non gestito, tettoia...
+    genere: Mapped[Optional[str]] = mapped_column(String(30))
+
+    istat: Mapped[Optional[str]] = mapped_column(String(10), index=True)
+    dettagli: Mapped[dict] = mapped_column(JSON, default=dict)
+    aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class Segnalazione(Base):
+    """Com'era la neve, la traccia e la strada, secondo chi c'e' stato.
+
+    Il contrario del diario qui sotto: questa si vede, ed e' il suo scopo.
+    Il vocabolario delle etichette - e il motivo per cui e' chiuso - sta in
+    app/segnalazioni.py.
+
+    Una sola segnalazione per persona, gita e giorno: se torni sulla stessa
+    gita lo stesso giorno non hai visto due cose diverse, hai corretto
+    quello che avevi scritto.
+    """
+
+    __tablename__ = "segnalazioni"
+    __table_args__ = (
+        UniqueConstraint("utente_id", "gita_id", "giorno", name="uq_segnalazione"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    utente_id: Mapped[int] = mapped_column(ForeignKey("utenti.id"), index=True)
+    gita_id: Mapped[int] = mapped_column(ForeignKey("gite.id"), index=True)
+    giorno: Mapped[dt.date] = mapped_column(Date, index=True)
+
+    neve: Mapped[list] = mapped_column(JSON, default=list)
+    traccia: Mapped[Optional[str]] = mapped_column(String(30))
+    accesso: Mapped[list] = mapped_column(JSON, default=list)
+    quota_cambio: Mapped[Optional[int]] = mapped_column(Integer)
+    nota: Mapped[Optional[str]] = mapped_column(String(140))
+
+    creato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+    aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
 class Fatta(Base):
     """Diario privato: le gite che uno ha fatto.
 
