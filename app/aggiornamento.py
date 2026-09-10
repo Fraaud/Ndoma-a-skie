@@ -13,11 +13,24 @@ import time
 
 from sqlalchemy.orm import Session
 
-from app import schede, simulazione
+from app import passaggi, schede, simulazione
 from app.models import Condizioni, Gita
 
 
 async def aggiorna_tutto(db: Session, pausa: float = 0.25, verboso: bool = True) -> dict:
+    # PRIMA di ogni altra cosa, e prima del ramo della simulazione: le
+    # uscite con la data passata si chiudono. Restavano "aperta" per sempre
+    # - invisibili nell'elenco (che parte da oggi) ma vive nel profilo di
+    # chi le aveva pubblicate. Se questa riga stesse sotto al `return` della
+    # simulazione, con la simulazione accesa non girerebbe mai.
+    if db is not None:
+        try:
+            chiuse = passaggi.chiudi_scadute(db)
+            if chiuse and verboso:
+                print(f"  {chiuse} uscite passate chiuse")
+        except Exception as e:
+            print(f"  chiusura delle uscite passate non riuscita: {e}")
+
     # Con la simulazione accesa si ricarica quella, non i dati di oggi:
     # altrimenti l'aggiornamento notturno la cancellerebbe ogni notte alle
     # quattro e la mattina l'app tornerebbe vuota senza che nessuno capisca

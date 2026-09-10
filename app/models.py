@@ -123,8 +123,22 @@ class Uscita(Base):
     lon_partenza: Mapped[Optional[float]] = mapped_column(Float)
 
     posti: Mapped[int] = mapped_column(Integer, default=0)  # offerti o richiesti
+    # Quanti di quei posti sono gia' andati. Lo tiene chi guida, con un
+    # tocco, dopo essersi accordato in chat: l'app non gestisce prenotazioni
+    # (vedi la nota in cima a app/passaggi.py). posti - presi = liberi, e a
+    # zero l'uscita si chiude da sola.
+    # Facoltativa perche' va aggiunta a un database che esiste gia': vedi
+    # _allinea_colonne in app/db.py. None si legge come 0.
+    presi: Mapped[Optional[int]] = mapped_column(Integer, default=0)
+
     note: Mapped[Optional[str]] = mapped_column(Text)
-    stato: Mapped[str] = mapped_column(String(12), default="aperta")  # aperta|chiusa|annullata
+    stato: Mapped[str] = mapped_column(String(12), default="aperta")  # aperta|chiusa
+    # Perche' e' chiusa: pieno | sistemato | annullata | scaduta. Serve a
+    # dire la cosa giusta a chi aveva un match con lei, e a distinguere
+    # "l'auto e' piena" da "ha cambiato idea".
+    chiusa_perche: Mapped[Optional[str]] = mapped_column(String(12))
+    chiusa_il: Mapped[Optional[dt.datetime]] = mapped_column(DateTime)
+
     creata_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
     gita: Mapped[Optional[Gita]] = relationship(back_populates="uscite")

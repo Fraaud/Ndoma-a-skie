@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app import esperienza
 from app import notifiche as notifiche_srv
-from app import archivio, posti, schede, segnalazioni, simulazione, tracce
+from app import archivio, passaggi, posti, schede, segnalazioni, simulazione, tracce
 from app.auth import utente_corrente, utente_facoltativo
 from app.config import settings
 from app.db import get_db, init_db
@@ -330,6 +330,13 @@ def _uscita_dict(db: Session, us: Uscita, con_match: bool = False) -> dict:
         "id": us.id, "tipo": us.tipo, "data": us.data.isoformat(),
         "flessibilita": us.flessibilita, "ora_partenza": us.ora_partenza,
         "comune_partenza": us.comune_partenza, "posti": us.posti,
+        # posti_liberi e' quello che conta per chi legge: `posti` sono quelli
+        # offerti all'inizio, e chi guida scala il conto man mano
+        "presi": passaggi.presi(us), "posti_liberi": passaggi.liberi(us),
+        "posti_testo": passaggi.in_parole(us), "pieno": passaggi.pieno(us),
+        "chiusa_perche": us.chiusa_perche,
+        "chiusa_etichetta": passaggi.etichetta_chiusura(us),
+        "motivi_chiusura": list(passaggi.MOTIVI_PER_TIPO.get(us.tipo, ())),
         "note": us.note, "stato": us.stato, "zona": us.zona,
         "gita": schede.gita_dict(g) if g else None,
         # l'esperienza viaggia insieme al nome: dev'essere sotto gli occhi
@@ -442,18 +449,91 @@ def dettaglio_uscita(uscita_id: int, db: Session = Depends(get_db)):
     return _uscita_dict(db, us, con_match=True)
 
 
-@app.post("/api/uscite/{uscita_id}/chiudi")
-def chiudi_uscita(
-    uscita_id: int, u: Utente = Depends(utente_corrente), db: Session = Depends(get_db)
-):
+class Posti(BaseModel):
+    presi: int = Field(ge=0, le=8)
+
+
+@app.post("/api/uscite/{uscita_id}/posti")
+async def segna_posti(uscita_id: int, dati: Posti, sfondo: BackgroundTasks,
+                      u: Utente = Depends(utente_corrente),
+                      db: Session = Depends(get_db)):
+    """Chi guida segna quanti posti sono andati. A zero liberi si chiude.
+
+    Il numero e' assoluto e non un "+1": due tocchi rapidi sullo stesso
+    pulsante - o un tocco ripetuto perche' la rete e' lenta - con un delta
+    conterebbero due volte. Vedi app/passaggi.py per il perche' il conto lo
+    tiene chi guida e non esiste una prenotazione.
+    """
     us = db.get(Uscita, uscita_id)
     if not us:
         raise HTTPException(404, "uscita non trovata")
     if us.autore_id != u.id:
         raise HTTPException(403, "non e' la tua uscita")
-    us.stato = "chiusa"
+    if us.tipo != "OFFRO":
+        raise HTTPException(400, "i posti li tiene solo chi offre un passaggio")
+    if us.stato != "aperta":
+        raise HTTPException(409, "quest'uscita e' gia' chiusa")
+
+    liberi = passaggi.imposta_presi(us, dati.presi)
+    chiusa = False
+    if liberi == 0 and int(us.posti or 0) > 0:
+        # l'auto e' piena: si chiude da sola e si avvisa chi aveva un match,
+        # altrimenti il quarto e il quinto scrivono per un posto che non c'e'
+        passaggi.chiudi(us, "pieno")
+        chiusa = True
     db.commit()
-    return {"ok": True}
+    if chiusa:
+        sfondo.add_task(_avvisa_chiusura, us.id)
+    return {**_uscita_dict(db, us), "chiusa": chiusa}
+
+
+class Chiusura(BaseModel):
+    motivo: Optional[str] = None
+
+
+@app.post("/api/uscite/{uscita_id}/chiudi")
+async def chiudi_uscita(
+    uscita_id: int, sfondo: BackgroundTasks, dati: Optional[Chiusura] = None,
+    u: Utente = Depends(utente_corrente), db: Session = Depends(get_db)
+):
+    """Chiude un'uscita, e dice PERCHE'.
+
+    Il motivo non e' burocrazia: a chi aveva un match si dice una cosa
+    diversa se l'auto e' piena ("ha completato l'auto"), se ha trovato un
+    passaggio ("non sta piu' cercando") o se ha annullato. Senza motivo si
+    assume l'annullamento, che e' quello che faceva prima il pulsante.
+    """
+    us = db.get(Uscita, uscita_id)
+    if not us:
+        raise HTTPException(404, "uscita non trovata")
+    if us.autore_id != u.id:
+        raise HTTPException(403, "non e' la tua uscita")
+    if us.stato != "aperta":
+        return {"ok": True, "gia_chiusa": True}
+
+    motivo = (dati.motivo if dati else None) or "annullata"
+    if not passaggi.motivo_ammesso(us, motivo):
+        raise HTTPException(
+            400, f"un'uscita di tipo {us.tipo} non si chiude con «{motivo}»: "
+                 f"ammessi {', '.join(passaggi.MOTIVI_PER_TIPO.get(us.tipo, ()))}")
+    passaggi.chiudi(us, motivo)
+    db.commit()
+    sfondo.add_task(_avvisa_chiusura, us.id)
+    return {"ok": True, "motivo": motivo}
+
+
+async def _avvisa_chiusura(uscita_id: int) -> None:
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        us = db.get(Uscita, uscita_id)
+        if us:
+            await notifiche_srv.notifica_chiusura(db, us)
+    except Exception as e:
+        print(f"chiusura dell'uscita {uscita_id} non notificata: {e}")
+    finally:
+        db.close()
 
 
 @app.get("/api/mie")

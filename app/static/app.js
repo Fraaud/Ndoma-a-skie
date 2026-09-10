@@ -1516,7 +1516,7 @@ VISTE.passaggi = async function () {
           <div class="titolo" style="margin-top:6px">${esc(u.gita?.nome || u.zona || "zona da definire")}</div>
           <div class="meta">da ${esc(u.comune_partenza || "?")}
             ${u.ora_partenza ? " &middot; " + esc(u.ora_partenza) : ""}
-            ${u.tipo === "OFFRO" ? " &middot; " + u.posti + " posti" : ""}</div>
+            &middot; <b>${esc(u.posti_testo)}</b></div>
           ${u.note ? `<div class="meta">${esc(u.note)}</div>` : ""}
           ${rigaEsperienza(u.autore)}
         </div>
@@ -1856,15 +1856,15 @@ VISTE.profilo = async function () {
     h += `<div class="card">
       <span class="badge-tipo t-${u.tipo}">${u.tipo}</span>
       <div class="titolo" style="margin-top:6px">${esc(u.gita?.nome || u.zona || "")}</div>
-      <div class="meta">${dataIt(u.data)} &middot; ${esc(u.stato)}</div>
+      <div class="meta">${dataIt(u.data)}${u.chiusa_etichetta
+        ? " &middot; " + esc(u.chiusa_etichetta) : ""}</div>
       ${(u.match || []).map(m => `<div class="match">
         <b>${esc(m.uscita.autore?.nome || "qualcuno")}</b>
         ${m.uscita.autore?.username ? `<a href="https://t.me/${esc(m.uscita.autore.username)}" target="_blank">@${esc(m.uscita.autore.username)}</a>` : ""}
         ${rigaEsperienza(m.uscita.autore)}
         <span class="badge-tipo t-${m.uscita.tipo}">${m.uscita.tipo}</span>
         <div class="meta">${esc(m.motivo)}</div></div>`).join("")}
-      ${u.stato === "aperta" ? `<button class="secondario" style="margin-top:10px"
-        onclick="chiudi(${u.id})">Chiudi</button>` : ""}
+      ${u.stato === "aperta" ? contatorePosti(u) : ""}
     </div>`;
   }
   h += `<h2>Il mio diario</h2>
@@ -1921,9 +1921,72 @@ VISTE.profilo = async function () {
   });
 };
 
-window.chiudi = async function (id) {
-  await api("/uscite/" + id + "/chiudi", { method: "POST" });
-  vai("profilo");
+/* Il conto dei posti, su un'uscita mia.
+
+   Un lato solo e un tocco: non c'e' nessuna prenotazione, ci si accorda in
+   chat e poi chi guida dice quanti posti restano. Il perche' sta in cima a
+   app/passaggi.py. A zero l'uscita si chiude da sola e il server avvisa chi
+   aveva un match: e' l'unico modo perche' il quarto non scriva per un posto
+   che non c'e' piu'. */
+function contatorePosti(u) {
+  if (u.tipo === "OFFRO") {
+    const totali = u.posti || 0;
+    return `<div class="posti-conto">
+      <div>
+        <div class="hint">Posti presi</div>
+        <div class="posti-num">${u.presi} <span>di ${totali}</span></div>
+      </div>
+      <div class="passi">
+        <button ${u.presi <= 0 ? "disabled" : ""}
+          onclick="segnaPosti(${u.id},${u.presi - 1})" aria-label="uno in meno">&minus;</button>
+        <button ${u.presi >= totali ? "disabled" : ""}
+          onclick="segnaPosti(${u.id},${u.presi + 1})" aria-label="uno in piu'">+</button>
+      </div>
+    </div>
+    <div class="hint">Man mano che ti accordi con qualcuno, segnalo qui.
+      All'ultimo posto l'uscita si chiude da sola e avviso chi stava ancora
+      cercando.</div>
+    <div class="scelte" style="margin-top:10px">
+      ${totali > 0 && u.presi < totali
+        ? `<button onclick="segnaPosti(${u.id},${totali})">Auto piena</button>` : ""}
+      <button onclick="chiudi(${u.id},'annullata')">Annulla l'uscita</button>
+    </div>
+    <div id="esito-uscita-${u.id}"></div>`;
+  }
+  return `<div class="scelte" style="margin-top:10px">
+      <button onclick="chiudi(${u.id},'sistemato')">Ho trovato un passaggio</button>
+      <button onclick="chiudi(${u.id},'annullata')">Non vado piu'</button>
+    </div>
+    <div class="hint">Se hai sistemato, segnalo: gli altri smettono di
+      scriverti.</div>
+    <div id="esito-uscita-${u.id}"></div>`;
+}
+
+window.segnaPosti = async function (id, presi) {
+  try {
+    const r = await api("/uscite/" + id + "/posti", {
+      method: "POST", body: JSON.stringify({ presi }),
+    });
+    haptic();
+    if (r.chiusa) {
+      try { TG?.showAlert?.("Auto piena: l'uscita e' chiusa e ho avvisato chi cercava."); } catch (e) {}
+    }
+    vai("profilo");
+  } catch (e) {
+    avviso("esito-uscita-" + id, e.message);
+  }
+};
+
+window.chiudi = async function (id, motivo) {
+  try {
+    await api("/uscite/" + id + "/chiudi", {
+      method: "POST", body: JSON.stringify({ motivo: motivo || "annullata" }),
+    });
+    haptic();
+    vai("profilo");
+  } catch (e) {
+    avviso("esito-uscita-" + id, e.message);
+  }
 };
 window.vai = vai;
 

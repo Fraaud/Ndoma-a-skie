@@ -12,6 +12,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app import esperienza
+from app import passaggi
 from app import telegram_ui as tg_ui
 from app.config import settings
 from app.models import Gita, Match, Uscita, Utente
@@ -87,6 +88,35 @@ async def notifica_match(db: Session, m: Match) -> bool:
         m.notificato = True
         db.commit()
     return bool(inviati)
+
+
+async def notifica_chiusura(db: Session, us: Uscita) -> int:
+    """Avvisa chi aveva un match con un'uscita che si e' appena chiusa.
+
+    E' la meta' del lavoro che mancava: senza questo il quarto e il quinto
+    scrivono per un posto che non c'e' piu', e tre autisti insistono con
+    uno che ha gia' risolto. Un messaggio a testa, una volta.
+
+    Le uscite scadute non avvisano nessuno: a cose fatte non serve.
+    """
+    autore = db.get(Utente, us.autore_id)
+    gita = db.get(Gita, us.gita_id) if us.gita_id else None
+    dove = gita.nome if gita else (us.zona or "zona da definire")
+    testo = passaggi.testo_chiusura(us, autore, dove)
+    if not testo:
+        return 0
+
+    inviati = 0
+    for altra in passaggi.controparti(db, us):
+        destinatario = db.get(Utente, altra.autore_id)
+        if not destinatario or not destinatario.notifiche:
+            continue
+        inviati += int(await invia(
+            destinatario.tg_id,
+            f"{testo}\n\nLa tua uscita resta aperta: se salta fuori "
+            "qualcun altro ti avviso.",
+        ))
+    return inviati
 
 
 async def notifica_arretrati(db: Session, limite: int = 20) -> int:

@@ -231,6 +231,9 @@ button.primario:disabled{opacity:.55}
 }
 .scelte button.on{background:var(--accento);color:var(--accento-fg);font-weight:600}
 .card .scelte{margin:6px 0 0}
+/* dentro una scheda i pulsanti bianchi su bianco sparivano: si legge il
+   testo e non si capisce che e' un pulsante */
+.card .scelte button{background:var(--fondo)}
 .suggerimenti{background:var(--scheda);border-radius:var(--r-piccolo);
   margin:4px var(--lato) 0;overflow:hidden}
 .suggerimenti div{padding:12px 14px;cursor:pointer;font-size:15px;min-height:44px}
@@ -350,6 +353,23 @@ button.primario:disabled{opacity:.55}
 .posti-num{font-size:19px;font-weight:660;letter-spacing:-.3px;white-space:nowrap}
 .posti-num span{font-size:12.5px;font-weight:560;color:var(--secondario)}
 .posti-num.ignota{font-size:13px;font-weight:560;color:var(--terziario)}
+
+/* --- il conto dei posti su un'uscita mia ---
+   Due pulsanti grandi: si usano al telefono, spesso in piedi al parcheggio
+   o mentre si risponde a un messaggio. */
+.posti-conto{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin-top:12px;
+}
+.posti-conto .posti-num{font-size:24px}
+.posti-conto .posti-num span{font-size:14px}
+.passi{display:flex;gap:8px}
+.passi button{
+  width:52px;min-height:44px;border:0;border-radius:var(--r-piccolo);
+  background:var(--accento-tenue);color:var(--accento);
+  font:inherit;font-size:22px;font-weight:600;cursor:pointer;
+}
+.passi button:disabled{opacity:.4;cursor:default}
 
 /* --- profilo altimetrico ---
    Si legge la forma della salita, non i metri: le quote vengono da un

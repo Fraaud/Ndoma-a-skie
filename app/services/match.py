@@ -27,6 +27,7 @@ import datetime as dt
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app import passaggi
 from app.geo import distanza_km
 from app.models import Gita, Match, Percorso, Uscita
 
@@ -157,8 +158,11 @@ def spiega(db: Session, a: Uscita, b: Uscita) -> dict:
     autista = a if a.tipo == "OFFRO" else (b if b.tipo == "OFFRO" else None)
     passeggero = b if autista is a else a
     if autista is not None:
-        if autista.posti <= 0:
-            return scarta("chi guida ha dichiarato zero posti liberi")
+        # posti LIBERI, non offerti: chi guida scala il conto man mano che
+        # si accorda con qualcuno, e a zero l'uscita si chiude da sola.
+        # Vedi app/passaggi.py.
+        if passaggi.liberi(autista) <= 0:
+            return scarta("chi guida non ha piu' posti liberi")
         perc = _percorso(db, autista)
         if perc and passeggero.istat_partenza and passeggero.istat_partenza in (perc.comuni_istat or []):
             punti += 4.0

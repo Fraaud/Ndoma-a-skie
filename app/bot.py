@@ -19,6 +19,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from app import notifiche as notifiche_srv
+from app import passaggi
 from app.config import settings
 from app.db import init_db, session_scope
 from app.models import Gita, Uscita, Utente
@@ -133,6 +134,57 @@ async def promemoria_settimanale(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 log.warning("promemoria non inviato a %s: %s", tg_id, e)
 
 
+async def promemoria_domani(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """La sera prima: "hai sistemato?" a chi ha un'uscita aperta con dei match.
+
+    UN messaggio per uscita, e solo a chi ha almeno un match: se non ha
+    ancora incontrato nessuno non c'e' niente da chiudere, e un promemoria
+    a vuoto e' il modo piu' rapido di far silenziare il bot.
+
+    Serve perche' il conto dei posti lo tiene chi guida (vedi
+    app/passaggi.py) e chi guida si accorda in chat, dove l'app non vede
+    niente. Questo e' l'unico momento in cui vale la pena chiederglielo.
+    """
+    from app.models import Match
+
+    domani = dt.date.today() + dt.timedelta(days=1)
+    messaggi: list[tuple[int, str]] = []
+    with session_scope() as db:
+        aperte = (
+            db.query(Uscita)
+            .filter(Uscita.stato == "aperta", Uscita.data == domani)
+            .all()
+        )
+        for x in aperte:
+            quanti = (db.query(Match)
+                      .filter((Match.uscita_a_id == x.id) | (Match.uscita_b_id == x.id))
+                      .count())
+            if not quanti:
+                continue
+            autore = db.get(Utente, x.autore_id)
+            if not autore or not autore.notifiche:
+                continue
+            g = db.get(Gita, x.gita_id) if x.gita_id else None
+            dove = g.nome if g else (x.zona or "zona da definire")
+            if x.tipo == "OFFRO":
+                testo = (f"<b>Domani: {dove}</b>\n"
+                         f"Hai {passaggi.in_parole(x)}. Se ti sei accordato con "
+                         "qualcuno, segnalo nell'app: chi cerca ancora un posto "
+                         "smette di scriverti, e chi resta lo sa.")
+            else:
+                testo = (f"<b>Domani: {dove}</b>\n"
+                         "Hai trovato un passaggio? Segnalo nell'app: cosi' gli "
+                         "altri non insistono con te.")
+            messaggi.append((autore.tg_id, testo))
+
+    for tg_id, testo in messaggi:
+        try:
+            await ctx.bot.send_message(tg_id, testo, parse_mode=ParseMode.HTML,
+                                       reply_markup=_tastiera())
+        except Exception as e:
+            log.warning("promemoria di domani non inviato a %s: %s", tg_id, e)
+
+
 async def _ciclo_recupero_notifiche(intervallo: int = 120) -> None:
     """Manda i match salvati ma mai notificati, per sempre.
 
@@ -211,6 +263,8 @@ def main() -> None:
     if app.job_queue:
         # giovedi' alle 19:00 (ora del server)
         app.job_queue.run_daily(promemoria_settimanale, time=dt.time(19, 0), days=(3,))
+        # ogni sera alle 20:30: "hai sistemato?" a chi va domani e ha match
+        app.job_queue.run_daily(promemoria_domani, time=dt.time(20, 30))
         if os.getenv("AGGIORNA_DAL_BOT", "").lower() in ("1", "true", "si"):
             app.job_queue.run_daily(aggiornamento_notturno, time=dt.time(4, 0))
             log.info("aggiornamento notturno attivo, ogni giorno alle 4:00")
