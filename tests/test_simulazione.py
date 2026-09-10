@@ -187,3 +187,48 @@ def test_spenta_laggiornamento_fa_il_lavoro_vero(monkeypatch):
         assert "simulazione" not in c
     finally:
         db.close()
+
+
+# ------------------------------- la simulazione accesa dopo, ad archivio pieno
+
+
+def test_caricata_riconosce_i_dati_veri_da_quelli_simulati(accesa):
+    """Il caso: la variabile si accende quando l'archivio e' gia' pieno.
+
+    Il controllo "ci sono condizioni?" risponderebbe si' e l'avvio non
+    farebbe niente: la simulazione comparirebbe solo dopo l'aggiornamento
+    notturno, cioe' domani. Chi ha appena impostato la variabile si aspetta
+    di vederla adesso.
+    """
+    import datetime as dt
+
+    from app.db import SessionLocal, engine, init_db
+    from app.models import Base, CacheBollettino
+
+    Base.metadata.drop_all(engine)
+    init_db()
+    db = SessionLocal()
+    try:
+        # archivio pieno, ma di dati veri
+        db.add(CacheBollettino(eaws_region="IT-21-01", giorno=dt.date.today(),
+                               payload={"ente": "ARPA Piemonte", "grado_massimo": 3}))
+        db.commit()
+        assert sim.caricata(db) is False
+
+        # ora arriva la simulazione
+        sim._scrivi_bollettini(db, {"IT-21-02": {"ente": "ARPA Piemonte"}},
+                               dt.date(2026, 2, 14))
+        assert sim.caricata(db) is True
+    finally:
+        db.close()
+
+
+def test_lavvio_sa_che_deve_ricaricare(accesa):
+    """Lo script chiede 'conta simulazione' e deve poter avere 0 o 1."""
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "deploy", "avvio_railway.sh")
+    with open(script, encoding="utf-8") as f:
+        testo = f.read()
+    assert "simulazione.caricata" in testo
+    assert 'SIMULAZIONE_INVERNO:-' in testo, (
+        "l'avvio deve guardare la variabile, non indovinare")

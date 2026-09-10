@@ -259,6 +259,27 @@ async def carica(db: Session, g: dt.date | None = None, gite: list | None = None
     return conteggi
 
 
+def caricata(db: Session) -> bool:
+    """In archivio ci sono i dati simulati, o quelli veri?
+
+    Serve all'avvio. Il caso da coprire: la simulazione si accende dopo che
+    l'archivio e' gia' pieno di dati veri. Il controllo sulle condizioni
+    ("ce n'e' almeno una?") risponderebbe si', l'avvio non farebbe niente, e
+    la simulazione comparirebbe solo dopo l'aggiornamento notturno delle
+    quattro - cioe' domani. Chi ha appena impostato la variabile, invece, si
+    aspetta di vederla adesso.
+
+    Il segnale e' l'etichetta sull'ente emittente: e' la stessa cosa che
+    l'utente legge in ogni scheda, quindi se c'e' li' e' caricata davvero.
+    """
+    marchio = ETICHETTA.split("{", 1)[0]           # "SIMULAZIONE - bollettino del "
+    for riga in (db.query(CacheBollettino)
+                 .filter(CacheBollettino.giorno == dt.date.today()).all()):
+        if str((riga.payload or {}).get("ente", "")).startswith(marchio):
+            return True
+    return False
+
+
 def avviso_utente() -> dict | None:
     """Cio' che l'app deve mostrare in cima a ogni schermata, se accesa."""
     g = giorno()
