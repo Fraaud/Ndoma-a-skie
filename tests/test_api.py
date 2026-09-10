@@ -114,3 +114,36 @@ def test_pubblicare_senza_autenticazione_e_rifiutato(db_pieno):
             "tipo": "OFFRO", "gita_id": 1, "data": SABATO.isoformat(), "posti": 3,
         })
     assert r.status_code == 401
+
+
+def test_un_ruolo_che_non_esiste_piu_non_si_pubblica(db_pieno):
+    """COMPAGNI e' stato tolto: l'endpoint non lo accetta piu'.
+
+    Il 400 arriva prima del 401 perche' la validazione del tipo viene prima
+    dell'autenticazione: va bene, e' il caso che ci interessa - nessuna
+    uscita di quel tipo puo' piu' nascere.
+    """
+    import hashlib
+    import hmac
+    import json
+    import time
+    from urllib.parse import urlencode
+
+    from app.services import match as match_srv
+
+    assert "COMPAGNI" not in match_srv.TIPI
+    os.environ["TELEGRAM_BOT_TOKEN"] = "123456:TESTTOKEN"
+    campi = {"auth_date": str(int(time.time())),
+             "user": json.dumps({"id": 8001, "first_name": "Test"})}
+    dcs = "\n".join(f"{k}={campi[k]}" for k in sorted(campi))
+    segreto = hmac.new(b"WebAppData", b"123456:TESTTOKEN", hashlib.sha256).digest()
+    campi["hash"] = hmac.new(segreto, dcs.encode(), hashlib.sha256).hexdigest()
+
+    with TestClient(app) as c:
+        r = c.post("/api/uscite",
+                   headers={"X-Telegram-Init-Data": urlencode(campi)}, json={
+                       "tipo": "COMPAGNI", "gita_id": 1,
+                       "data": SABATO.isoformat(), "posti": 1,
+                   })
+    assert r.status_code == 400
+    assert "tipo non valido" in r.json()["detail"]

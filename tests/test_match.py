@@ -152,11 +152,33 @@ def test_non_si_fa_match_con_se_stessi(db):
     assert match_srv.valuta(db, a, b) is None
 
 
-def test_compagni_si_trovano_fra_loro(db):
+def test_i_ruoli_sono_due(db):
+    """C'era un terzo tipo, COMPAGNI ("cerco compagnia"), tolto perche'
+    non serviva a niente: questa app mette in comune le AUTO, e chi cerca
+    compagnia lo fa meglio nella chat del gruppo. Vedi la nota in cima a
+    app/services/match.py."""
+    assert match_srv.TIPI == ("OFFRO", "CERCO")
+
+
+def test_due_che_offrono_o_due_che_cercano_non_combaciano(db):
+    """Due con l'auto non si portano a vicenda, e due senza nemmeno."""
     gita = db.query(Gita).filter_by(nome="Testa Malacosta").one()
-    a = _uscita(db, 2, "COMPAGNI", gita.id, posti=1)
-    b = _uscita(db, 3, "COMPAGNI", gita.id, posti=1)
-    assert match_srv.valuta(db, a, b) is not None
+    a = _uscita(db, 2, "OFFRO", gita.id, posti=3)
+    b = _uscita(db, 3, "OFFRO", gita.id, posti=2)
+    assert match_srv.valuta(db, a, b) is None
+    c = _uscita(db, 1, "CERCO", gita.id, posti=1)
+    d = _uscita(db, 2, "CERCO", gita.id, posti=1)
+    assert match_srv.valuta(db, c, d) is None
+
+
+def test_unuscita_vecchia_di_tipo_sparito_non_cerca_candidati(db):
+    """In archivio possono restare uscite COMPAGNI: non si cancellano, ma
+    nessuno le fa combaciare e non fanno cadere niente."""
+    gita = db.query(Gita).filter_by(nome="Testa Malacosta").one()
+    vecchia = _uscita(db, 2, "COMPAGNI", gita.id, posti=1)
+    _uscita(db, 1, "OFFRO", gita.id, posti=3)
+    assert match_srv.candidati(db, vecchia) == []
+    assert match_srv.aggiorna_match(db, vecchia) == []
 
 
 def test_aggiorna_match_scrive_e_non_duplica(db):

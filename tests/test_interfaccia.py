@@ -161,6 +161,35 @@ def test_il_gps_si_spegne_quando_si_esce():
         "uscendo da Emergenza il GPS resta in ascolto"
 
 
+# ------------------------------------------------------------- «ci vai?»
+
+
+def test_ci_vai_sta_in_alto_nella_scheda():
+    """E' la cosa che l'app fa e nessun altro fa. Prima stava in fondo, dopo
+    neve, bollettino, previsione, condizioni e piole: uno schermo e mezzo di
+    scorrimento per dire "offro un posto". Ora sta subito sotto
+    l'avvicinamento, dove hai appena letto quanto ci metti da casa."""
+    js = _leggi("app.js")
+    vista = js[js.index("VISTE.gita = async function"):js.index("VISTE.sapere")]
+    posizione_civai = vista.index("Ci vai?")
+    assert posizione_civai < vista.index('id="segnalazioni"'), \
+        "«Ci vai?» sta dopo le condizioni"
+    assert posizione_civai < vista.index("Pericolo valanghe"), \
+        "«Ci vai?» sta dopo il bollettino"
+    assert vista.index('id="avvicinamento"') < posizione_civai, \
+        "«Ci vai?» sta prima di «Da casa tua»"
+
+
+def test_nel_javascript_ci_sono_due_ruoli_e_non_tre():
+    """COMPAGNI e' stato tolto: se resta un pulsante che lo pubblica,
+    l'utente riceve un 400 senza capire perche'."""
+    js = _leggi("app.js")
+    assert "COMPAGNI" not in js
+    assert "compagnia" not in js.lower()
+    for ruolo in ("OFFRO", "CERCO"):
+        assert ruolo in js
+
+
 # ----------------------------------------------------------------- traccia
 
 

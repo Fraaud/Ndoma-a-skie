@@ -2,7 +2,7 @@
 
 Tre oggetti centrali:
   Gita    - un itinerario del catalogo (fonte aperta o inserito dagli utenti)
-  Uscita  - "il giorno X vado alla gita Y", con ruolo OFFRO / CERCO / COMPAGNI
+  Uscita  - "il giorno X vado alla gita Y", con ruolo OFFRO o CERCO
   Match   - due uscite compatibili
 Il resto e' cache (meteo, bollettini, percorsi) e anagrafica.
 """
@@ -106,10 +106,13 @@ class Uscita(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     autore_id: Mapped[int] = mapped_column(ForeignKey("utenti.id"), index=True)
     gita_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gite.id"), index=True)
-    # Per il tipo COMPAGNI la gita puo' essere assente: si indica solo una zona.
+    # La gita puo' essere assente: si indica solo una zona, per chi offre
+    # un posto verso una valle senza aver ancora deciso l'itinerario.
     zona: Mapped[Optional[str]] = mapped_column(String(60))
 
-    tipo: Mapped[str] = mapped_column(String(12))  # OFFRO | CERCO | COMPAGNI
+    # OFFRO | CERCO. C'era un terzo tipo, COMPAGNI: vedi la nota in
+    # app/services/match.py. In archivio possono restarne di vecchie.
+    tipo: Mapped[str] = mapped_column(String(12))
     data: Mapped[dt.date] = mapped_column(Date, index=True)
     flessibilita: Mapped[int] = mapped_column(Integer, default=0)  # +/- giorni
     ora_partenza: Mapped[Optional[str]] = mapped_column(String(5))  # "05:30"

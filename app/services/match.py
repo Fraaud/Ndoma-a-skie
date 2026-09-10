@@ -1,13 +1,24 @@
 """Match fra uscite.
 
-Tre tipi di uscita:
-  OFFRO    - ho l'auto e N posti per la gita X il giorno D
-  CERCO    - mi serve un passaggio per la gita X il giorno D
-  COMPAGNI - il giorno D voglio andare in zona Z, cerco compagnia
-             (la gita puo' non essere ancora decisa: e' il caso d'uso che
-              nessuna app di car sharing copre, ed e' meta' del traffico)
+Due tipi di uscita, e sono l'app:
+  OFFRO - ho l'auto e N posti per la gita X il giorno D
+  CERCO - mi serve un passaggio per la gita X il giorno D
 
 Il punteggio premia, in ordine: essere sulla strada, stessa gita, stessa data.
+
+C'ERA UN TERZO TIPO, "COMPAGNI"
+-------------------------------
+Serviva a dire "il giorno D vado in zona Z, cerco compagnia". E' stato
+**tolto su richiesta di Francesco**: non serviva a niente. La ragione,
+per non riproporlo fra sei mesi: questa app mette in comune le AUTO. Chi
+cerca compagnia sta cercando qualcosa che la chat del gruppo fa meglio -
+e intanto raddoppiava le combinazioni di ruoli da far combaciare, i badge,
+le etichette e i casi da spiegare, in cambio di zero.
+
+Le uscite COMPAGNI eventualmente rimaste in archivio non si toccano e non
+si cancellano: non si creano piu' e nessuno le fa combaciare, e siccome
+l'elenco mostra solo le uscite da oggi in avanti, spariscono da sole
+passata la loro data.
 """
 from __future__ import annotations
 
@@ -20,6 +31,16 @@ from app.geo import distanza_km
 from app.models import Gita, Match, Percorso, Uscita
 
 SOGLIA = 5.0
+
+# I ruoli ammessi, in un posto solo: li valida l'endpoint che crea l'uscita
+# e li usa la regola di compatibilita' qui sotto. Averli scritti in due
+# punti e' il modo in cui uno dei due resta indietro.
+TIPI = ("OFFRO", "CERCO")
+
+# Le combinazioni che hanno senso: chi offre con chi cerca. Non due che
+# offrono (hanno entrambi l'auto) ne' due che cercano (non si portano a
+# vicenda).
+COPPIE = ({"OFFRO", "CERCO"},)
 
 
 def _giorni(a: dt.date, b: dt.date) -> int:
@@ -85,9 +106,7 @@ def spiega(db: Session, a: Uscita, b: Uscita) -> dict:
         return scarta("una delle due uscite non e' piu' aperta")
 
     # combinazioni ammesse
-    coppia = {a.tipo, b.tipo}
-    if coppia not in ({"OFFRO", "CERCO"}, {"COMPAGNI"}, {"OFFRO", "COMPAGNI"},
-                      {"CERCO", "COMPAGNI"}):
+    if {a.tipo, b.tipo} not in COPPIE:
         return scarta(f"ruoli non compatibili ({a.tipo} e {b.tipo})")
 
     # data
@@ -190,10 +209,13 @@ def candidati(db: Session, uscita: Uscita) -> list[Uscita]:
         .filter(Uscita.data >= da, Uscita.data <= a)
         .filter(Uscita.autore_id != uscita.autore_id)
     )
+    # chi offre cerca chi cerca, e viceversa
     if uscita.tipo == "OFFRO":
-        q = q.filter(or_(Uscita.tipo == "CERCO", Uscita.tipo == "COMPAGNI"))
+        q = q.filter(Uscita.tipo == "CERCO")
     elif uscita.tipo == "CERCO":
-        q = q.filter(or_(Uscita.tipo == "OFFRO", Uscita.tipo == "COMPAGNI"))
+        q = q.filter(Uscita.tipo == "OFFRO")
+    else:
+        return []      # un tipo che non esiste piu' non ha candidati
     return q.all()
 
 

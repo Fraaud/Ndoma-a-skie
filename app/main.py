@@ -312,7 +312,7 @@ def salva_profilo(
 
 
 class NuovaUscita(BaseModel):
-    tipo: str  # OFFRO | CERCO | COMPAGNI
+    tipo: str  # OFFRO | CERCO (vedi match.TIPI)
     gita_id: Optional[int] = None
     zona: Optional[str] = None
     data: str
@@ -401,7 +401,8 @@ async def crea_uscita(
     u: Utente = Depends(utente_corrente),
     db: Session = Depends(get_db),
 ):
-    if dati.tipo not in ("OFFRO", "CERCO", "COMPAGNI"):
+    # i ruoli ammessi stanno in match_srv.TIPI, in un posto solo
+    if dati.tipo not in match_srv.TIPI:
         raise HTTPException(400, "tipo non valido")
     if not dati.gita_id and not dati.zona:
         raise HTTPException(400, "serve una gita o almeno una zona")

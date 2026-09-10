@@ -165,7 +165,7 @@ def main() -> None:
             db.add(Uscita(autore_id=utenti[1].id, gita_id=gite[0].id, tipo="CERCO",
                           data=sabato, posti=1, ora_partenza="05:30",
                           istat_partenza="004029", comune_partenza="Borgo San Dalmazzo"))
-            db.add(Uscita(autore_id=utenti[2].id, gita_id=gite[4].id, tipo="COMPAGNI",
+            db.add(Uscita(autore_id=utenti[2].id, gita_id=gite[4].id, tipo="CERCO",
                           data=sabato + dt.timedelta(days=1), posti=1, flessibilita=1,
                           istat_partenza="004203", comune_partenza="Saluzzo",
                           note="Prima volta sul Matto, cerco qualcuno che lo conosce"))

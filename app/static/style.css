@@ -183,7 +183,7 @@ nav button.on svg{stroke:var(--accento)}
 .card .disclaimer{padding:10px 0 0}
 
 /* --- mappa --- */
-#mappa,.mappa{height:190px;border-radius:var(--r);margin:0 var(--lato) 12px;
+#mappa,.mappa{height:168px;border-radius:var(--r);margin:0 var(--lato) 12px;
   z-index:1;overflow:hidden}
 
 /* --- moduli --- */
@@ -255,6 +255,9 @@ button.primario:disabled{opacity:.55}
 .sez{margin-top:18px}
 .badge-tipo{font-size:11px;font-weight:700;letter-spacing:.4px;
   padding:3px 8px;border-radius:6px}
+/* .t-COMPAGNI resta: quel tipo di uscita non si crea piu' (vedi la nota in
+   app/services/match.py) ma le vecchie devono restare leggibili finche' non
+   passa la loro data. */
 .t-OFFRO{background:#D8F0DD;color:#14532D}
 .t-CERCO{background:#DBE7FB;color:#1E3A8A}
 .t-COMPAGNI{background:#F3E2FB;color:#581C87}

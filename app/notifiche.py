@@ -16,8 +16,11 @@ from app import telegram_ui as tg_ui
 from app.config import settings
 from app.models import Gita, Match, Uscita, Utente
 
+# COMPAGNI non si crea piu' (vedi la nota in app/services/match.py) ma
+# l'etichetta resta: le uscite vecchie devono restare leggibili finche'
+# non passa la loro data.
 RUOLO = {"OFFRO": "offre posti", "CERCO": "cerca un passaggio",
-         "COMPAGNI": "cerca compagnia"}
+         "COMPAGNI": "cerca compagnia (tipo non piu' disponibile)"}
 
 
 async def invia(chat_id: int, testo: str, tastiera: dict | None = None) -> bool:

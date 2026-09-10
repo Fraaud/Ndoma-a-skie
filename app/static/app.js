@@ -552,12 +552,6 @@ VISTE.gita = async function (arg) {
     <div class="meta" style="margin:-8px 0 12px">${esc(g.comune || "")}
       ${g.valle ? " &middot; " + esc(g.valle) : ""}</div>
     <div id="mappa"></div>
-    <div class="giorni" style="margin-bottom:12px">
-      ${giorni.map(d => `<div class="giorno" style="cursor:pointer;
-        ${d === s.giorno ? "outline:2px solid var(--btn)" : ""}"
-        onclick="vai('gita',{id:${g.id},giorno:'${d}'})">
-        <b>${dataIt(d).split(" ")[0]}</b>${dataIt(d).split(" ").slice(1).join(" ")}</div>`).join("")}
-    </div>
     <div class="tag-riga">
       ${g.quota_min ? `<span class="tag">attacco ${g.quota_min} m</span>` : ""}
       ${g.quota_max ? `<span class="tag">cima ${g.quota_max} m</span>` : ""}
@@ -569,11 +563,42 @@ VISTE.gita = async function (arg) {
   /* --- avvicinamento: quanto ci metti, e da dove passi --- */
   h += `<div id="avvicinamento"></div>`;
 
+  /* --- ci vai? ---
+     Sta QUI, subito sotto "Da <casa tua>", e non in fondo alla scheda: e'
+     la cosa che l'app fa e nessun altro fa, e prima stava dopo la neve, il
+     bollettino, la previsione, le condizioni e le piole - cioe' dopo uno
+     schermo e mezzo di scorrimento. Chi apre una gita perche' ci vuole
+     andare deve poterlo dire dove ha appena letto quanto ci mette.
+
+     Il nome passa per una variabile e non interpolato nell'HTML: gite come
+     "Punta Colombo da Sant'Anna" romperebbero la stringa JavaScript. */
+  GITA_CORRENTE = { id: g.id, nome: g.nome };
+  const apri = (t) =>
+    `vai('nuovaUscita',{gita:GITA_CORRENTE.id,nome:GITA_CORRENTE.nome,tipo:'${t}'})`;
+  h += `<h2>Ci vai?</h2>
+    <div class="scelte">
+      <button onclick="${apri("OFFRO")}">Offro posti</button>
+      <button onclick="${apri("CERCO")}">Cerco un passaggio</button>
+    </div>`;
+
   /* --- la traccia, col profilo e il GPX --- */
   h += `<div id="traccia"></div>`;
 
   /* --- all'attacco: parcheggi (con la capienza) e ripari --- */
   h += `<div id="posti"></div>`;
+
+  /* --- il giorno: sta QUI e non in cima ---
+     Serve a leggere neve e bollettino per il giorno in cui si va, e sono
+     le due sezioni che vengono subito sotto. In cima occupava novanta
+     pixel del primo schermo per cambiare una cosa che sta piu' in basso,
+     e spingeva "Ci vai?" sotto la piega. */
+  h += `<h2>Che giorno</h2>
+    <div class="giorni">
+      ${giorni.map(d => `<div class="giorno" style="cursor:pointer;
+        ${d === s.giorno ? "outline:2px solid var(--accento)" : ""}"
+        onclick="vai('gita',{id:${g.id},giorno:'${d}'})">
+        <b>${dataIt(d).split(" ")[0]}</b>${dataIt(d).split(" ").slice(1).join(" ")}</div>`).join("")}
+    </div>`;
 
   /* --- neve --- */
   if (n.disponibile) {
@@ -650,19 +675,6 @@ VISTE.gita = async function (arg) {
 
   /* --- dopo la gita: le piole lungo la strada di casa --- */
   h += `<div id="piole"></div>`;
-
-  /* --- azioni --- */
-  // il nome passa per una variabile, non interpolato nell'HTML: gite come
-  // "Punta Colombo da Sant'Anna" romperebbero la stringa JavaScript
-  GITA_CORRENTE = { id: g.id, nome: g.nome };
-  const apri = (t) =>
-    `vai('nuovaUscita',{gita:GITA_CORRENTE.id,nome:GITA_CORRENTE.nome,tipo:'${t}'})`;
-  h += `<h2>Ci vai?</h2>
-    <div class="scelte">
-      <button onclick="${apri("OFFRO")}">Offro posti</button>
-      <button onclick="${apri("CERCO")}">Cerco passaggio</button>
-      <button onclick="${apri("COMPAGNI")}">Cerco compagnia</button>
-    </div>`;
 
   if (!fuoriDaTelegram()) {
     const oggi = new Date().toISOString().slice(0, 10);
@@ -1487,9 +1499,8 @@ VISTE.passaggi = async function () {
   const uscite = await api("/uscite");
   let h = `<div class="wrap"><h1>Passaggi</h1>
     <div class="scelte" style="margin-bottom:6px">
-      <button onclick="vai('nuovaUscita',{tipo:'OFFRO'})">Offro</button>
-      <button onclick="vai('nuovaUscita',{tipo:'CERCO'})">Cerco</button>
-      <button onclick="vai('nuovaUscita',{tipo:'COMPAGNI'})">Compagnia</button>
+      <button onclick="vai('nuovaUscita',{tipo:'OFFRO'})">Offro posti</button>
+      <button onclick="vai('nuovaUscita',{tipo:'CERCO'})">Cerco un passaggio</button>
     </div>`;
   if (!uscite.length) {
     h += `<div class="vuoto">Ancora nessuna uscita nei prossimi giorni.<br>
@@ -1534,8 +1545,7 @@ VISTE.nuovaUscita = async function (opz = {}) {
     <label>Cosa fai</label>
     <div class="scelte" id="tipi">
       <button data-t="OFFRO">Offro posti</button>
-      <button data-t="CERCO">Cerco passaggio</button>
-      <button data-t="COMPAGNI">Cerco compagnia</button>
+      <button data-t="CERCO">Cerco un passaggio</button>
     </div>
 
     <label>Gita</label>
