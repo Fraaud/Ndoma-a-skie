@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import segnalazioni as sg  # noqa: E402
+from app import tracce as sg_tracce  # noqa: E402
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "app", "static")
@@ -158,6 +159,35 @@ def test_il_gps_si_spegne_quando_si_esce():
     i = js.index("function vai(nome, arg)")
     assert "clearWatch" in js[i:i + 900], \
         "uscendo da Emergenza il GPS resta in ascolto"
+
+
+# ----------------------------------------------------------------- traccia
+
+
+def test_una_linea_calcolata_si_vede_che_e_calcolata():
+    """Una linea su una mappa e' un invito a seguirla: se non l'ha
+    percorsa nessuno, deve essere scritto sopra."""
+    js = _leggi("app.js")
+    corpo = _blocco(js, "async function disegnaTraccia", "function modulodiCaricamento")
+    assert "adatta_a_sci" in corpo, "il percorso calcolato non viene distinto"
+    assert "origine_etichetta" in corpo, "la provenienza non si mostra"
+
+
+def test_le_parole_della_provenienza_arrivano_dal_server():
+    """Come per le condizioni: il vocabolario sta in un posto solo."""
+    js = _leggi("app.js")
+    for etichetta in (sg_tracce.ORIGINI[o]["etichetta"] for o in sg_tracce.ORIGINI):
+        assert etichetta not in js, \
+            f"«{etichetta}» e' scritta a mano nel JavaScript"
+
+
+def test_il_caricamento_dice_che_deve_essere_una_registrazione_tua():
+    """E' la frase che regge tutto: il server non puo' verificarlo."""
+    js = _leggi("app.js")
+    corpo = _blocco(js, "function modulodiCaricamento", "function collegaCaricamento")
+    testo = corpo.lower()
+    assert "fatta da te" in testo
+    assert "altri siti" in testo
 
 
 # ------------------------------------------------- parcheggi, ripari, piole

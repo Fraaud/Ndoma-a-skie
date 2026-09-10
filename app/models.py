@@ -220,6 +220,43 @@ class CacheBollettino(Base):
     aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
 
+class Traccia(Base):
+    """La linea di un itinerario, con la sua provenienza.
+
+    Una per gita: se ne arriva una migliore (una registrata da una persona
+    al posto di una calcolata) prende il posto della vecchia. Il perche'
+    della provenienza - e perche' una linea calcolata non si mostra su una
+    gita di sci - sta in cima a app/tracce.py.
+
+    I punti stanno in JSON e non in una tabella di punti: si leggono e si
+    scrivono sempre tutti insieme, e una tabella da mezzo milione di righe
+    per non interrogarne mai una sola sarebbe solo piu' lenta.
+    """
+
+    __tablename__ = "tracce"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gita_id: Mapped[int] = mapped_column(ForeignKey("gite.id"), unique=True, index=True)
+    origine: Mapped[str] = mapped_column(String(12))     # fonte|utente|calcolata
+
+    # [[lat, lon], ...] oppure [[lat, lon, quota], ...]
+    punti: Mapped[list] = mapped_column(JSON, default=list)
+    quote_da: Mapped[Optional[str]] = mapped_column(String(12))   # fonte|ors
+
+    lunghezza_km: Mapped[Optional[float]] = mapped_column(Float)
+    # Calcolato dalla traccia, NON quello dichiarato dalla fonte: sovrastima
+    # sempre (il rumore del modello del terreno diventa salita). Serve al
+    # controllo di plausibilita', non a sostituire il numero della fonte.
+    dislivello_su: Mapped[Optional[int]] = mapped_column(Integer)
+    dislivello_giu: Mapped[Optional[int]] = mapped_column(Integer)
+
+    licenza: Mapped[Optional[str]] = mapped_column(String(60))
+    autori: Mapped[Optional[str]] = mapped_column(String(400))
+    caricata_da: Mapped[Optional[int]] = mapped_column(ForeignKey("utenti.id"))
+
+    aggiornata_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
 class Posto(Base):
     """Un punto preso da OpenStreetMap: parcheggio, riparo o piola.
 

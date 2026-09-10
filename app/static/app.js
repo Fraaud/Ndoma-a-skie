@@ -569,6 +569,9 @@ VISTE.gita = async function (arg) {
   /* --- avvicinamento: quanto ci metti, e da dove passi --- */
   h += `<div id="avvicinamento"></div>`;
 
+  /* --- la traccia, col profilo e il GPX --- */
+  h += `<div id="traccia"></div>`;
+
   /* --- all'attacco: parcheggi (con la capienza) e ripari --- */
   h += `<div id="posti"></div>`;
 
@@ -714,6 +717,7 @@ VISTE.gita = async function (arg) {
   disegnaAvvicinamento(g.id);
   disegnaSegnalazioni(g.id);
   disegnaPosti(g, m.tramonto);
+  disegnaTraccia(g);
 };
 
 /* --------------------------------------------- condizioni viste (segnalazioni)
@@ -946,6 +950,176 @@ window.scordaFatta = async function (id) {
     haptic();
     disegnaDiario();
   } catch (e) { /* si rilegge riaprendo il profilo */ }
+};
+
+/* ----------------------------------------------------------- la traccia
+
+   Una linea su una mappa, in montagna, e' un invito a seguirla: quindi
+   accanto alla linea si scrive sempre CHI L'HA DISEGNATA. Le parole della
+   provenienza arrivano dal server (app/tracce.py, ORIGINI), non le scrive
+   il JavaScript - come per le condizioni, il vocabolario sta in un posto
+   solo. */
+
+/* Il profilo altimetrico: SVG scritto a mano, nessuna libreria per
+   disegnare una linea. Serve a leggere la FORMA della salita - dove sono i
+   pianori e dove il muro - non a misurare metri: le quote vengono da un
+   modello del terreno a maglia di qualche decina di metri, e lo diciamo. */
+function profiloSvg(punti, largo = 358, alto = 96) {
+  if (!punti || punti.length < 2) return "";
+  const quote = punti.map(p => p[1]);
+  const kmMax = punti[punti.length - 1][0] || 1;
+  let qMin = Math.min(...quote), qMax = Math.max(...quote);
+  if (qMax - qMin < 50) { qMax = qMin + 50; }         // una salita piatta non si schiaccia
+  const margine = 16;
+  const x = km => margine + (largo - margine * 2) * (km / kmMax);
+  const y = q => alto - 18 - (alto - 34) * ((q - qMin) / (qMax - qMin));
+
+  const linea = punti.map((p, i) =>
+    `${i ? "L" : "M"}${x(p[0]).toFixed(1)} ${y(p[1]).toFixed(1)}`).join("");
+  const area = `${linea}L${x(kmMax).toFixed(1)} ${alto - 18}L${x(0).toFixed(1)} ${alto - 18}Z`;
+
+  return `<svg class="profilo" viewBox="0 0 ${largo} ${alto}" width="100%"
+      height="${alto}" role="img"
+      aria-label="profilo altimetrico: da ${Math.round(qMin)} a ${Math.round(qMax)} metri in ${kmMax.toFixed(1)} chilometri">
+    <path class="pr-area" d="${area}"/>
+    <path class="pr-linea" d="${linea}"/>
+    <text class="pr-txt" x="2" y="12">${Math.round(qMax)} m</text>
+    <text class="pr-txt" x="2" y="${alto - 4}">${Math.round(qMin)} m</text>
+    <text class="pr-txt" x="${largo - 2}" y="${alto - 4}"
+      text-anchor="end">${kmMax.toFixed(1)} km</text>
+  </svg>`;
+}
+
+async function disegnaTraccia(gita) {
+  const box = document.getElementById("traccia");
+  if (!box) return;
+  let d;
+  try {
+    d = await api("/traccia/" + gita.id);
+  } catch (e) {
+    box.innerHTML = "";
+    return;
+  }
+  if (!box.isConnected) return;
+
+  if (d.stato === "assente") {
+    // non e' un errore ed e' importante dirlo: per una parte del catalogo
+    // la fonte pubblica solo il punto dell'attacco
+    box.innerHTML = `<h2>Traccia</h2>
+      <div class="card"><div class="hint">${esc(d.spiega || "")}</div>
+      ${fuoriDaTelegram() ? "" : `<div class="hint" style="margin-top:8px">Se
+        l'hai fatta e hai la registrazione, puoi caricarla qui sotto.</div>`}
+      ${modulodiCaricamento(gita)}</div>`;
+    collegaCaricamento(gita);
+    return;
+  }
+
+  const dislPari = d.dislivello_plausibile === false;
+  box.innerHTML = `<h2>Traccia</h2>
+    <div class="card">
+      <div class="riga">
+        <div style="min-width:0">
+          <div class="titolo" style="font-size:15px">${esc(d.origine_etichetta)}</div>
+          <div class="meta">${esc(d.origine_spiega)}</div>
+        </div>
+      </div>
+      ${d.con_quote ? profiloSvg(d.profilo) : `<div class="hint"
+        style="margin-top:10px">Profilo altimetrico non disponibile: la
+        traccia non ha le quote.</div>`}
+      <div class="dato" style="margin-top:6px">
+        ${d.lunghezza_km ? `<div><div class="k">Sviluppo</div>
+          <div class="v">${d.lunghezza_km} km</div></div>` : ""}
+        ${d.dislivello_dichiarato ? `<div><div class="k">Dislivello</div>
+          <div class="v">${d.dislivello_dichiarato} m</div></div>` : ""}
+        <div><div class="k">Punti</div><div class="v">${d.punti_totali}</div></div>
+      </div>
+      ${d.con_quote ? `<div class="hint" style="margin-top:10px">Le quote
+        vengono da un modello del terreno: servono a vedere la forma della
+        salita, non a misurare un salto di roccia. Il dislivello mostrato e'
+        quello <b>dichiarato dalla fonte</b>${d.dislivello_dalla_traccia
+          ? ` (dalla traccia risulterebbe ${d.dislivello_dalla_traccia} m)` : ""}.</div>` : ""}
+      ${dislPari ? `<div class="avviso">Il dislivello dichiarato
+        (${d.dislivello_dichiarato} m) e quello che risulta dalla traccia
+        (${d.dislivello_dalla_traccia} m) sono molto diversi: uno dei due e'
+        sbagliato, e non sappiamo quale. Controlla sulla fonte.</div>` : ""}
+      ${d.adatta_a_sci ? "" : `<div class="avviso grave">Questo percorso e'
+        <b>calcolato</b>, non registrato: non e' la traccia di una gita di
+        scialpinismo, e d'inverno la linea giusta non e' il sentiero
+        estivo.</div>`}
+      <button class="secondario" style="width:100%;margin-top:12px"
+        onclick="scaricaGpx(${gita.id})">Scarica il GPX</button>
+      ${d.licenza ? `<div class="disclaimer">${esc(d.licenza)}${d.autori
+        ? " &mdash; " + esc(d.autori) : ""}. L'attribuzione viaggia dentro il
+        file GPX, non solo qui.</div>` : ""}
+      ${modulodiCaricamento(gita)}
+    </div>`;
+  collegaCaricamento(gita);
+
+  // la linea sulla mappa che la scheda ha gia' disegnato
+  if (mappa && typeof L !== "undefined" && d.punti?.length) {
+    try {
+      const linea = L.polyline(d.punti.map(p => [p[0], p[1]]),
+        { color: "#C0281C", weight: 3.5, opacity: .85 }).addTo(mappa);
+      mappa.fitBounds(linea.getBounds(), { padding: [18, 18] });
+    } catch (e) { /* la mappa e' un di piu': se non c'e', pazienza */ }
+  }
+}
+
+function modulodiCaricamento(gita) {
+  if (fuoriDaTelegram()) return "";
+  return `<div style="margin-top:14px;border-top:1px solid var(--filetto);padding-top:12px">
+    <div class="hint"><b>Carica la tua traccia.</b> Solo una registrazione
+      fatta da te: quella e' tua e puoi darla all'app. Le tracce scaricate
+      da altri siti no &mdash; non sono nostre da ridistribuire, ed e' la
+      stessa ragione per cui non copiamo i cataloghi degli altri.</div>
+    <label class="secondario" for="gpx-file"
+      style="display:block;text-align:center;margin:10px 0 0;cursor:pointer;
+             line-height:22px;font-size:14.5px">Scegli un file GPX</label>
+    <input type="file" id="gpx-file" accept=".gpx,application/gpx+xml" hidden>
+    <div id="esito-gpx"></div>
+  </div>`;
+}
+
+function collegaCaricamento(gita) {
+  const campo = document.getElementById("gpx-file");
+  if (!campo) return;
+  campo.addEventListener("change", async () => {
+    const file = campo.files?.[0];
+    if (!file) return;
+    if (file.size > 6_000_000) {
+      avviso("esito-gpx", "File troppo grande (oltre 6 MB).");
+      return;
+    }
+    avviso("esito-gpx", "");
+    let testo;
+    try {
+      testo = await file.text();
+    } catch (e) {
+      avviso("esito-gpx", "Non riesco a leggere il file.");
+      return;
+    }
+    try {
+      await api("/traccia/" + gita.id, {
+        method: "POST", body: JSON.stringify({ gpx: testo }), timeout: 30000,
+      });
+      haptic();
+      await disegnaTraccia(gita);
+      avviso("esito-gpx", "Caricata. Grazie: e' la traccia migliore che "
+        + "questa gita puo' avere.", "ok");
+    } catch (e) {
+      avviso("esito-gpx", e.message);
+    }
+  });
+}
+
+/* Il GPX si apre fuori dal webview: dentro Telegram un download parte a
+   volte e a volte no, e un pulsante che non fa niente e' peggio di un
+   pulsante che manda al browser. */
+window.scaricaGpx = function (gitaId) {
+  const url = location.origin + "/api/gpx/" + gitaId;
+  haptic();
+  if (TG?.openLink) TG.openLink(url);
+  else window.open(url, "_blank");
 };
 
 /* --------------------------------------------------------- emergenza

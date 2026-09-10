@@ -56,7 +56,7 @@ conta() {
   n=$(python - "$1" 2>/dev/null <<'CONTA' | tail -n 1 | tr -cd '0-9'
 import sys, datetime as dt
 from app.db import SessionLocal, init_db
-from app.models import Comune, Condizioni, Gita, Posto
+from app.models import Comune, Condizioni, Gita, Posto, Traccia
 init_db()
 db = SessionLocal()
 quale = sys.argv[1]
@@ -66,6 +66,8 @@ elif quale == "comuni":
     print(db.query(Comune).count())
 elif quale == "posti":
     print(db.query(Posto).count())
+elif quale == "tracce":
+    print(db.query(Traccia).count())
 elif quale == "simulazione":
     from app import simulazione
     print(1 if simulazione.caricata(db) else 0)
@@ -120,6 +122,20 @@ fi
 if [ "$gite" -ge 300 ] && [ "$(conta posti)" -eq 0 ]; then
   echo "   nessun parcheggio in archivio: li scarico da OpenStreetMap"
   lavoro="${lavoro:+$lavoro && }python scripts/importa_posti.py"
+fi
+
+# Le tracce: si scaricano una volta e poi restano. Sono il dato che l'app
+# non aveva e che tutti chiedono, e costano una chiamata per gita alla
+# fonte - sei minuti, in sottofondo. Le quote lungo la traccia (il profilo
+# altimetrico) vanno con --quote e passano dalla chiave ORS, che ha una
+# quota giornaliera: se si interrompe, il riavvio dopo riprende da dove
+# era.
+if [ "$gite" -ge 300 ] && [ "$(conta tracce)" -eq 0 ]; then
+  echo "   nessuna traccia in archivio: le scarico dalla fonte"
+  lavoro="${lavoro:+$lavoro && }python scripts/importa_tracce.py"
+  if [ -n "${ORS_API_KEY:-}" ]; then
+    lavoro="$lavoro && python scripts/importa_tracce.py --quote"
+  fi
 fi
 
 # Meteo e bollettini si rifanno comunque ogni notte: qui servono solo se non

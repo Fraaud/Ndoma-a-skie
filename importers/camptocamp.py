@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import math
 import time
 
 import httpx
 
+from app import tracce
 from app.config import settings
 from app.db import session_scope
 from app.geo import comune_di, dentro_bbox, mercator_to_wgs84, regione_eaws_di
@@ -77,6 +79,69 @@ def _coordinate(geometry) -> tuple[float, float] | None:
         lon, lat = mercator_to_wgs84(x, y)
         return lat, lon
     return None
+
+
+def _geometrie(geometry) -> list:
+    """Le geometrie candidate dentro il campo `geometry` di camptocamp.
+
+    Gemella di quella dentro `_coordinate`, con una differenza voluta:
+    qui `geom_detail` viene PRIMA di `geom`, perche' a noi serve la linea e
+    `geom` spesso contiene il solo punto. `_coordinate` resta com'era: cerca
+    l'attacco, funziona, ed e' coperta dai test - non si tocca per
+    eleganza. Le due forme diverse fra elenco e dettaglio restano l'insidia
+    di sempre, vedi la nota in cima al file.
+    """
+    if not isinstance(geometry, dict):
+        return []
+    candidati = []
+    if "coordinates" in geometry:
+        candidati.append(geometry)
+    for chiave in ("geom_detail", "geom"):
+        raw = geometry.get(chiave)
+        if not raw:
+            continue
+        try:
+            candidati.append(json.loads(raw) if isinstance(raw, str) else raw)
+        except Exception:
+            continue
+    return candidati
+
+
+def linea(geometry) -> list:
+    """La traccia completa in (lat, lon), o [] se la fonte da' solo un punto.
+
+    Per una parte del catalogo camptocamp pubblica soltanto un Point: su
+    quelle gite la traccia non c'e' e non ci sara', e l'app deve dirlo
+    invece di far finta. Qui non si inventa niente: si restituisce [].
+
+    Si preferisce `geom_detail` (la linea) a `geom` (spesso il solo punto),
+    ed e' il motivo per cui `_geometrie` le mette in quell'ordine.
+    """
+    for g in _geometrie(geometry):
+        tipo, coords = g.get("type"), g.get("coordinates")
+        if not coords:
+            continue
+        if tipo == "LineString":
+            parti = [coords]
+        elif tipo == "MultiLineString":
+            parti = coords
+        else:
+            continue
+        punti = []
+        for parte in parti:
+            for xy in parte:
+                try:
+                    lon, lat = mercator_to_wgs84(xy[0], xy[1])
+                except Exception:
+                    continue
+                # senza questo, un punto sporco nella geometria (ne capitano)
+                # sposta la traccia in mezzo al mare e il profilo diventa
+                # illeggibile
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    punti.append([round(lat, 6), round(lon, 6)])
+        if len(punti) >= 8:
+            return punti
+    return []
 
 
 def _titolo(doc: dict) -> str | None:
@@ -232,6 +297,20 @@ def _salva(doc: dict, dett: dict, nome: str, attacco, cima) -> bool:
             eaws_region=regione_eaws_di(lat, lon),
             verificata=False,
         ))
+        db.flush()          # serve l'id della gita per attaccarci la traccia
+
+        # La traccia, se la fonte la pubblica. Prima veniva letta e buttata:
+        # `_coordinate` ne prendeva il primo punto e il resto finiva nel
+        # cestino, cioe' ogni import passava sopra al dato piu' richiesto.
+        punti = linea(dett.get("geometry")) or linea(doc.get("geometry"))
+        if punti:
+            try:
+                g = db.query(Gita).filter_by(fonte="camptocamp",
+                                             fonte_id=fonte_id).one()
+                tracce.salva(db, g, punti, "fonte", licenza=LICENZA, autori=autori)
+            except Exception as e:
+                # una traccia mancata non fa perdere la gita
+                print(f"    traccia di {nome}: {e}", file=sys.stderr)
     return True
 
 

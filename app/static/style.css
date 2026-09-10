@@ -212,10 +212,16 @@ button.primario{
 }
 button.primario:disabled{opacity:.55}
 .card button.primario{width:100%;margin:16px 0 0}
-button.secondario{
+/* Non `button.secondario`: la classe la portano anche un <a> ("scrivi" su
+   un'uscita, "chiama" su una piola) e una <label> (il selettore di file).
+   Col selettore ristretto ai bottoni quelli restavano testo semplice, e
+   nel tema scuro erano invisibili. */
+.secondario{
   background:var(--accento-tenue);color:var(--accento);border:0;
   border-radius:var(--r-piccolo);padding:11px 15px;font:inherit;font-size:14.5px;
   font-weight:600;cursor:pointer;min-height:44px;
+  display:inline-flex;align-items:center;justify-content:center;
+  text-decoration:none;
 }
 .scelte{display:flex;gap:8px;margin:6px var(--lato) 0}
 .scelte button{
@@ -341,6 +347,17 @@ button.secondario{
 .posti-num{font-size:19px;font-weight:660;letter-spacing:-.3px;white-space:nowrap}
 .posti-num span{font-size:12.5px;font-weight:560;color:var(--secondario)}
 .posti-num.ignota{font-size:13px;font-weight:560;color:var(--terziario)}
+
+/* --- profilo altimetrico ---
+   Si legge la forma della salita, non i metri: le quote vengono da un
+   modello del terreno con la maglia di qualche decina di metri. */
+.profilo{display:block;margin-top:10px}
+.pr-area{fill:color-mix(in srgb, var(--accento) 16%, transparent);stroke:none}
+.pr-linea{fill:none;stroke:var(--accento);stroke-width:2;
+  stroke-linejoin:round;stroke-linecap:round}
+.pr-txt{fill:var(--terziario);font-size:10px;font-weight:600;font-family:inherit}
+
+input[type=file]{padding:9px 10px;font-size:13.5px;background:var(--fondo)}
 
 /* --- emergenza ---
    Le coordinate si dettano al telefono a uno che le scrive: cifre grandi,

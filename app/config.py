@@ -126,6 +126,14 @@ class Settings:
     url_skitour: str = "https://skitour.fr/api"
     url_overpass: str = "https://overpass-api.de/api/interpreter"
     url_ors_directions: str = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
+    # Quote lungo una linea, con la stessa chiave del routing. Accetta al
+    # massimo 2000 vertici per richiesta: le tracce si semplificano prima
+    # (vedi app/tracce.MAX_VERTICI).
+    url_ors_elevation: str = "https://api.openrouteservice.org/elevation/line"
+    # A piedi sui sentieri di OSM: serve solo per i PERCORSI CALCOLATI, che
+    # non si mostrano sulle gite di sci. Vedi la nota in cima a app/tracce.py.
+    url_ors_a_piedi: str = (
+        "https://api.openrouteservice.org/v2/directions/foot-hiking/geojson")
 
     # Micro-regioni EAWS da caricare.
     # ATTENZIONE: l'Italia NON ha un file unico "IT", e' divisa per regione

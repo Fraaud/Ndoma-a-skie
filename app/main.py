@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
@@ -18,13 +18,14 @@ from sqlalchemy.orm import Session
 
 from app import esperienza
 from app import notifiche as notifiche_srv
-from app import archivio, posti, schede, segnalazioni, simulazione
+from app import archivio, posti, schede, segnalazioni, simulazione, tracce
 from app.auth import utente_corrente, utente_facoltativo
 from app.config import settings
 from app.db import get_db, init_db
 from app.geo import comune_di, distanza_km
 from app.models import (
-    Comune, Condizioni, Fatta, Gita, Match, Posto, Segnalazione, Uscita, Utente,
+    Comune, Condizioni, Fatta, Gita, Match, Posto, Segnalazione, Traccia,
+    Uscita, Utente,
 )
 from app.services import match as match_srv
 from app.services import neve as neve_srv
@@ -618,6 +619,93 @@ def cancella_fatta(fatta_id: int, u: Utente = Depends(utente_corrente),
     db.delete(f)
     db.commit()
     return {"cancellata": True}
+
+
+# ----------------------------------------------------------------- traccia
+#
+# La provenienza della traccia e' il concetto centrale, e il motivo sta in
+# cima a app/tracce.py: una linea su una mappa, in montagna, e' un invito a
+# seguirla, quindi conta piu' di tutto sapere chi l'ha disegnata.
+
+
+@app.get("/api/traccia/{gita_id}")
+def traccia_della_gita(gita_id: int, db: Session = Depends(get_db)):
+    g = db.get(Gita, gita_id)
+    if not g:
+        raise HTTPException(404, "gita non trovata")
+    t = db.query(Traccia).filter_by(gita_id=gita_id).one_or_none()
+    if not t:
+        # Non e' un errore: per una parte del catalogo la fonte pubblica
+        # solo il punto dell'attacco. Si dice, non si finge.
+        return {"stato": "assente",
+                "spiega": "La fonte di questo itinerario pubblica solo il "
+                          "punto di partenza, non la traccia."}
+    return {"stato": "pronta", **tracce.traccia_dict(t, g)}
+
+
+@app.get("/api/gpx/{gita_id}")
+def scarica_gpx(gita_id: int, db: Session = Depends(get_db)):
+    """Il file GPX, con l'attribuzione dentro.
+
+    Sulla scheda l'attribuzione si vede; in un file che gira per WhatsApp e
+    finisce su un altro telefono, no. Vedi tracce.gpx().
+    """
+    g = db.get(Gita, gita_id)
+    if not g:
+        raise HTTPException(404, "gita non trovata")
+    t = db.query(Traccia).filter_by(gita_id=gita_id).one_or_none()
+    if not t or not t.punti:
+        raise HTTPException(404, "questa gita non ha una traccia")
+    return Response(
+        content=tracce.gpx(g, t),
+        media_type="application/gpx+xml",
+        headers={"Content-Disposition":
+                 f'attachment; filename="{tracce.nome_file(g)}"'},
+    )
+
+
+class TracciaCaricata(BaseModel):
+    gpx: str = Field(max_length=8_000_000)
+
+
+@app.post("/api/traccia/{gita_id}")
+def carica_traccia(gita_id: int, dati: TracciaCaricata,
+                   u: Utente = Depends(utente_corrente),
+                   db: Session = Depends(get_db)):
+    """Il GPX registrato da chi ha fatto la gita.
+
+    E' l'unica via per cui una traccia di terzi puo' entrare qui, ed e'
+    legittima solo per una ragione: e' la registrazione di chi carica, cioe'
+    un dato suo. Nell'interfaccia c'e' scritto in chiaro; qui non possiamo
+    verificarlo, quindi la frase nell'interfaccia non e' un ornamento - e'
+    la parte che regge tutto.
+
+    Una traccia caricata da una persona vale piu' di quella della fonte
+    (l'ha percorsa lei), quindi la sostituisce. Il contrario no: vedi
+    tracce.sostituisce().
+    """
+    g = db.get(Gita, gita_id)
+    if not g:
+        raise HTTPException(404, "gita non trovata")
+    try:
+        punti = tracce.da_gpx(dati.gpx, bbox=settings.bbox)
+    except tracce.GpxNonValido as e:
+        raise HTTPException(400, str(e))
+    if not tracce.vicina_alla_gita(punti, g.lat, g.lon):
+        raise HTTPException(
+            400, "questa traccia non passa da qui: ne' l'inizio ne' la fine "
+                 f"sono vicini a {g.nome}. Hai scelto la gita giusta?")
+
+    esistente = db.query(Traccia).filter_by(gita_id=gita_id).one_or_none()
+    if esistente and not tracce.sostituisce(esistente.origine, "utente"):
+        raise HTTPException(409, "c'e' gia' una traccia migliore")
+
+    t = tracce.salva(db, g, punti, "utente", caricata_da=u.id,
+                     licenza="registrata da chi l'ha caricata",
+                     autori=u.nome, quote_da="fonte" if tracce.con_quote(punti) else None)
+    db.commit()
+    db.refresh(t)
+    return {"stato": "pronta", **tracce.traccia_dict(t, g)}
 
 
 # ------------------------------------------------- parcheggi, ripari, piole
