@@ -41,6 +41,29 @@ def dentro_bbox(lon: float, lat: float, bbox=None) -> bool:
     return b[0] <= lon <= b[2] and b[1] <= lat <= b[3]
 
 
+def istat_a_sei(valore) -> str | None:
+    """Riporta un codice ISTAT alla forma canonica: sei cifre con gli zeri.
+
+    Il GeoJSON dei comuni porta lo STESSO codice in due formati:
+        com_istat_code      "004078"   (stringa, con gli zeri davanti)
+        com_istat_code_num   4078      (numero, senza)
+    Finivano in posti diversi - l'indice spaziale leggeva il numero, la
+    tabella dei comuni la stringa - e siccome il confronto e' fra stringhe,
+    "4078" e "004078" non sono mai uguali. Conseguenza: la regola piu'
+    importante del match, "il passeggero e' SULLA STRADA di chi guida", non
+    poteva scattare mai, e i paesi attraversati comparivano come numeri
+    invece che come nomi. Un errore silenzioso: nessun crash, nessun log,
+    solo match che non arrivano.
+
+    Da qui in poi il formato canonico e' uno: sei cifre. Codici che non sono
+    numerici (o piu' lunghi) si lasciano stare: non sono codici ISTAT.
+    """
+    if valore is None or valore == "":
+        return None
+    t = str(valore).strip()
+    return t.zfill(6) if t.isdigit() and len(t) <= 6 else t
+
+
 # ------------------------------------------------------------- indice spaziale
 
 
@@ -87,6 +110,11 @@ class IndiceGeo:
                     break
             else:
                 out[logico] = None
+        # I codici ISTAT escono da qui in forma canonica, sempre. E' il punto
+        # in cui entrano nel programma, quindi e' il punto giusto: normalizzare
+        # piu' a valle vuol dire dimenticarsene in un posto su tre.
+        if "istat" in out:
+            out["istat"] = istat_a_sei(out["istat"])
         return out
 
     def per_punto(self, lat: float, lon: float) -> dict | None:

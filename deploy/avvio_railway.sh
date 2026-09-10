@@ -14,6 +14,20 @@ mkdir -p "$DATI"
 echo "== Ndoma a skie' - avvio =="
 echo "   cartella dati: $DATI"
 
+# Il controllo che conta di piu': la cartella dati e' un volume, o e' dentro
+# l'immagine? Un volume montato sta su un dispositivo DIVERSO da quello del
+# codice. Se sono lo stesso, a ogni deploy si perdono iscritti e catalogo -
+# e l'app riparte perfettamente, solo vuota, senza un errore da nessuna
+# parte. Meglio una riga urlata nei log che una domanda "perche' devo
+# rimettere tutto?".
+if [ "$(stat -c %d "$DATI" 2>/dev/null)" = "$(stat -c %d . 2>/dev/null)" ]; then
+  echo "   !!  ATTENZIONE: $DATI NON e' un volume, sta dentro l'immagine."
+  echo "   !!  A ogni deploy si perdono utenti, preferenze e catalogo."
+  echo "   !!  Su Railway: Settings -> Volumes, punto di mount $DATI."
+else
+  echo "   volume: ok, i dati sopravvivono ai deploy"
+fi
+
 # I file geografici viaggiano nel repository gia' ritagliati (3 MB): al primo
 # avvio si copiano sul volume. Rigenerarli qui vorrebbe dire scaricare e
 # analizzare un GeoJSON nazionale da un centinaio di MB, e su un container
@@ -42,6 +56,12 @@ db = SessionLocal(); print(db.query(Comune).count()); db.close()
   echo "   scrivo l'elenco dei comuni in archivio"
   python scripts/setup_geo.py --solo-archivio || echo "   ATTENZIONE: elenco comuni non scritto"
 fi
+
+# I codici ISTAT devono stare tutti nella stessa forma (sei cifre): per un
+# periodo l'indice spaziale ne scriveva una versione e la tabella dei comuni
+# un'altra, e la regola "il passeggero e' sulla strada di chi guida" non
+# poteva scattare. E' un no-op dopo la prima volta.
+python scripts/ripara_istat.py || echo "   ATTENZIONE: riparazione ISTAT non riuscita"
 
 # Due controlli separati, non uno solo. Il catalogo e le condizioni meteo si
 # riempiono con due comandi diversi, e ognuno puo' fallire per conto suo: la

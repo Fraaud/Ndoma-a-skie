@@ -154,6 +154,102 @@ function mappaSicura(id, lat, lon, zoom = 12) {
   }
 }
 
+/* Quanto ci metti ad arrivare all'attacco, e che paesi attraversi.
+
+   E' lo stesso percorso stradale che serve al match: "quanto ci metto?" e
+   "chi passa da casa mia?" sono la stessa domanda vista da due lati. La
+   prima volta il server risponde "in_calcolo" (interseca il percorso con
+   867 poligoni comunali, non e' istantaneo) e si richiede una volta sola,
+   dopo qualche secondo: se non e' pronto neanche allora, pazienza, si
+   ripresenta aprendo di nuovo la scheda. */
+async function disegnaAvvicinamento(gitaId, riprova = true) {
+  const box = document.getElementById("avvicinamento");
+  if (!box || fuoriDaTelegram()) return;
+  let d;
+  try {
+    d = await api("/avvicinamento/" + gitaId);
+  } catch (e) {
+    return;   // e' un di piu': se non arriva, la scheda resta completa
+  }
+  if (!box.isConnected) return;   // l'utente ha già cambiato schermata
+
+  if (d.stato === "senza_comune") {
+    box.innerHTML = `<div class="card" style="margin-top:12px">
+      <div class="hint">Dì da dove parti abitualmente e ti dico quanto ci
+      metti ad arrivare, e da quali paesi passi.</div>
+      <button class="secondario" style="margin-top:8px"
+        onclick="vai('profilo')">Imposta il comune di partenza</button></div>`;
+    return;
+  }
+  if (d.stato === "in_calcolo") {
+    box.innerHTML = `<div class="card" style="margin-top:12px">
+      <div class="hint">Sto calcolando il percorso da casa tua...</div></div>`;
+    if (riprova) setTimeout(() => disegnaAvvicinamento(gitaId, false), 4000);
+    return;
+  }
+
+  const paesi = d.comuni || [];
+  box.innerHTML = `<h2>Da ${esc(d.da || "casa tua")}</h2>
+    <div class="card">
+      ${d.minuti ? `<div class="riga">
+        <div><div class="powder-num">${d.minuti} min</div>
+          <div class="hint">di auto${d.km ? ", " + d.km + " km" : ""}</div></div>
+      </div>` : `<div class="hint">Tempo di percorrenza non disponibile:
+        manca la chiave di routing (ORS_API_KEY), quindi il percorso e' una
+        retta e i paesi qui sotto sono un'approssimazione.</div>`}
+      ${paesi.length ? `<div style="margin-top:10px">
+        <div class="hint" style="margin-bottom:4px">Passi da:</div>
+        <div>${paesi.map(n => `<span class="tag">${esc(n)}</span>`).join("")}</div>
+        <div class="hint" style="margin-top:8px;font-size:11.5px">Chi abita in
+          uno di questi paesi e' sulla tua strada: e' cosi' che l'app trova i
+          passaggi.</div></div>` : ""}
+    </div>`;
+}
+
+/* La rosa delle esposizioni, come la disegnano i bollettini.
+
+   Non e' decorazione: "esposizioni N-NE-E, sopra 2200 m" scritto a parole
+   richiede di fermarsi a leggere, la rosa si guarda e si e' capito. Il dato
+   e' identico - quello che il bollettino dichiara - solo reso nella forma in
+   cui chi va in montagna e' abituato a vederlo.
+
+   SVG scritto a mano: nessuna libreria per otto triangoli. */
+const ESPOSIZIONI = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
+
+function rosaEsposizioni(esposizioni, lato = 66) {
+  const attive = new Set(esposizioni || []);
+  const c = lato / 2, r = c - 9;
+  const punto = (gradi, raggio) => {
+    const a = (gradi - 90) * Math.PI / 180;   // 0 gradi = nord = in alto
+    return [c + raggio * Math.cos(a), c + raggio * Math.sin(a)];
+  };
+  let settori = "";
+  ESPOSIZIONI.forEach((nome, i) => {
+    const [x1, y1] = punto(i * 45 - 22.5, r);
+    const [x2, y2] = punto(i * 45 + 22.5, r);
+    settori += `<path d="M${c} ${c} L${x1.toFixed(1)} ${y1.toFixed(1)} `
+      + `A${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)} Z" `
+      + `class="rosa-set${attive.has(nome) ? " on" : ""}"/>`;
+  });
+  // le quattro lettere cardinali, appena fuori dal cerchio
+  let lettere = "";
+  [["N", 0], ["E", 90], ["S", 180], ["O", 270]].forEach(([t, g]) => {
+    const [x, y] = punto(g, r + 6.5);
+    lettere += `<text x="${x.toFixed(1)}" y="${(y + 2.6).toFixed(1)}" `
+      + `class="rosa-txt">${t}</text>`;
+  });
+  return `<svg class="rosa" viewBox="0 0 ${lato} ${lato}" width="${lato}" height="${lato}"
+    role="img" aria-label="esposizioni: ${esc((esposizioni || []).join(", ") || "nessuna")}">
+    ${settori}<circle cx="${c}" cy="${c}" r="${r * 0.38}" class="rosa-buco"/>${lettere}</svg>`;
+}
+
+function fasciaQuota(pr) {
+  if (pr.quota_min && pr.quota_max) return `fra ${pr.quota_min} e ${pr.quota_max} m`;
+  if (pr.quota_min) return `sopra ${pr.quota_min} m`;
+  if (pr.quota_max) return `sotto ${pr.quota_max} m`;
+  return "a tutte le quote";
+}
+
 /* ------------------------------------------------------------ router */
 
 const VISTE = {};
@@ -172,6 +268,20 @@ function vai(nome, arg) {
 document.querySelectorAll("nav button").forEach(b =>
   b.addEventListener("click", () => { haptic(); vai(b.dataset.vista); }));
 
+/* La fascia dei dati di prova. Sta in cima a OGNI schermata e non si puo'
+   chiudere: un grado di pericolo mostrato senza contesto e' identico a
+   quello di oggi, e qualcuno potrebbe usarlo per decidere una gita. Finche'
+   la simulazione e' accesa, questo avviso e' l'unica cosa che lo impedisce. */
+function mostraFasciaSimulazione(sim) {
+  const box = document.getElementById("fascia-simulazione");
+  if (!box) return;
+  if (!sim || !sim.attiva) { box.hidden = true; box.textContent = ""; return; }
+  box.textContent = sim.testo;
+  box.hidden = false;
+  // il contenuto scorre sotto la fascia: gli si fa spazio
+  document.body.style.paddingTop = box.offsetHeight + "px";
+}
+
 /* ------------------------------------------------------------ weekend */
 
 /* La striscia dei giorni: scorre di lato col dito.
@@ -179,7 +289,7 @@ document.querySelectorAll("nav button").forEach(b =>
    ne scrive aggiorna.py: oltre non ci sarebbe niente da mostrare. */
 function strisciaGiorni(scelto) {
   const oggi = new Date(); oggi.setHours(12, 0, 0, 0);
-  let h = `<div class="giorni" id="giorni">`;
+  let h = `<div class="striscia" id="striscia-giorni">`;
   for (let i = 0; i < 7; i++) {
     const d = new Date(oggi); d.setDate(d.getDate() + i);
     const iso = d.toISOString().slice(0, 10);
@@ -237,7 +347,7 @@ VISTE.weekend = async function (giorno) {
 
   // il giorno scelto puo' essere fuori dallo schermo: lo si porta al centro
   // senza animazione, altrimenti a ogni cambio la pagina "salta"
-  const attivo = document.querySelector(".giorni button.on");
+  const attivo = document.querySelector(".striscia button.on");
   if (attivo) attivo.scrollIntoView({ block: "nearest", inline: "center" });
 };
 
@@ -323,6 +433,9 @@ VISTE.gita = async function (arg) {
       ${g.difficolta ? `<span class="tag">${esc(g.difficolta)}</span>` : ""}
     </div>`;
 
+  /* --- avvicinamento: quanto ci metti, e da dove passi --- */
+  h += `<div id="avvicinamento"></div>`;
+
   /* --- neve --- */
   if (n.disponibile) {
     h += `<h2>Neve caduta</h2>
@@ -352,10 +465,18 @@ VISTE.gita = async function (arg) {
     h += `<div class="card">
       <div class="grado"><span class="pallino g${gr || 0}"></span>
         Grado ${gr || "-"} ${esc((v.gradi?.[0]?.testo) || "")}</div>
-      ${v.problemi?.length ? `<div style="margin-top:9px">
-        <div class="hint" style="margin-bottom:4px">Problemi segnalati dal bollettino:</div>
-        ${v.problemi.map(pr => `<div class="meta" style="margin:3px 0">&bull;
-          <b>${esc(pr.tipo_it)}</b>${pr.esposizioni.length ? " &mdash; esposizioni " + pr.esposizioni.join("-") : ""}${pr.quota_min ? ", sopra " + pr.quota_min + " m" : ""}${pr.quota_max ? ", sotto " + pr.quota_max + " m" : ""}</div>`).join("")}
+      ${v.problemi?.length ? `<div style="margin-top:12px">
+        <div class="hint" style="margin-bottom:6px">Problemi segnalati dal bollettino,
+          con le esposizioni e le quote che indica:</div>
+        ${v.problemi.map(pr => `<div class="problema">
+          ${rosaEsposizioni(pr.esposizioni)}
+          <div style="min-width:0">
+            <div class="titolo" style="font-size:14.5px">${esc(pr.tipo_it)}</div>
+            <div class="meta">${esc(fasciaQuota(pr))}</div>
+            <div class="meta">${pr.esposizioni.length
+              ? "esposizioni " + pr.esposizioni.join(", ")
+              : "esposizioni non specificate"}</div>
+          </div></div>`).join("")}
       </div>` : ""}
       ${v.sintesi ? `<div class="meta" style="margin-top:9px">${esc(v.sintesi)}</div>` : ""}
       <div class="hint" style="margin-top:9px;font-size:11.5px">
@@ -392,6 +513,23 @@ VISTE.gita = async function (arg) {
       <button onclick="${apri("COMPAGNI")}">Cerco compagnia</button>
     </div>`;
 
+  if (!fuoriDaTelegram()) {
+    const oggi = new Date().toISOString().slice(0, 10);
+    h += `<h2>Ci sono stato</h2>
+      <div class="card">
+        <div class="hint">Il diario e' solo tuo: nessun altro lo vede, e non
+          compare da nessuna parte accanto al tuo nome.</div>
+        <label>Quando</label>
+        <input type="date" id="data-fatta" max="${oggi}" value="${oggi}">
+        <label>Nota per te (facoltativa)</label>
+        <input id="nota-fatta" maxlength="500"
+          placeholder="neve trasformata, ghiaccio nel canale...">
+        <button class="secondario" style="margin-top:10px" id="segna-fatta">
+          Segna nel diario</button>
+        <div id="esito-fatta"></div>
+      </div>`;
+  }
+
   if (g.fonte_url) {
     h += `<div class="disclaimer" style="margin-top:18px">
       Dati dell'itinerario da <a href="${g.fonte_url}" target="_blank">${esc(g.fonte)}</a>
@@ -403,6 +541,161 @@ VISTE.gita = async function (arg) {
 
   const mp = mappaSicura("mappa", g.lat, g.lon, 12);
   if (mp) { L.marker([g.lat, g.lon]).addTo(mp).bindPopup("Attacco / parcheggio"); mappa = mp; }
+
+  document.getElementById("segna-fatta")?.addEventListener("click", async () => {
+    try {
+      const r = await api("/fatte", {
+        method: "POST",
+        body: JSON.stringify({
+          gita_id: g.id,
+          data: document.getElementById("data-fatta").value,
+          nota: document.getElementById("nota-fatta").value || null,
+        }),
+      });
+      haptic();
+      avviso("esito-fatta", r.aggiornata
+        ? "Nota aggiornata nel diario." : "Segnata nel diario.", "ok");
+    } catch (e) {
+      avviso("esito-fatta", e.message);
+    }
+  });
+
+  // non si attende: la scheda e' gia' a schermo e questo arriva dopo
+  disegnaAvvicinamento(g.id);
+};
+
+/* Il diario privato. La riga che conta e' il commento sul modello Fatta:
+   un contatore di gite visibile diventa in fretta una classifica, e una
+   classifica in montagna spinge nella direzione sbagliata. Per questo il
+   diario sta qui, nel profilo di chi lo scrive, e da nessun'altra parte. */
+async function disegnaDiario() {
+  const box = document.getElementById("diario");
+  if (!box || fuoriDaTelegram()) return;
+  let righe;
+  try {
+    righe = await api("/fatte");
+  } catch (e) {
+    box.innerHTML = `<div class="hint">Diario non disponibile: ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!righe.length) {
+    box.innerHTML = `<div class="hint">Ancora niente. Apri una gita e usa
+      &laquo;Ci sono stato&raquo;.</div>`;
+    return;
+  }
+  // per stagione, non per anno civile: un inverno sta a cavallo di due anni,
+  // e "2026" spezzerebbe a metà la stagione di chi scia a gennaio
+  const perStagione = {};
+  for (const f of righe) {
+    const d = new Date(f.data + "T00:00:00");
+    const a = d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1;
+    const nome = `${a}/${String(a + 1).slice(2)}`;
+    (perStagione[nome] = perStagione[nome] || []).push(f);
+  }
+  box.innerHTML = Object.keys(perStagione).sort().reverse().map(st => `
+    <div class="hint" style="margin:12px 0 6px">Stagione ${esc(st)} &mdash;
+      ${perStagione[st].length} ${perStagione[st].length === 1 ? "uscita" : "uscite"}</div>
+    ${perStagione[st].map(f => `<div class="card" style="padding:10px 12px">
+      <div class="riga">
+        <div style="min-width:0">
+          <div class="titolo" style="font-size:14.5px">${esc(f.gita?.nome || "gita rimossa")}</div>
+          <div class="meta">${dataIt(f.data)}</div>
+          ${f.nota ? `<div class="meta">${esc(f.nota)}</div>` : ""}
+        </div>
+        <button class="secondario" style="padding:5px 9px;font-size:12px"
+          onclick="scordaFatta(${f.id})">togli</button>
+      </div></div>`).join("")}`).join("");
+}
+
+window.scordaFatta = async function (id) {
+  try {
+    await api("/fatte/" + id, { method: "DELETE" });
+    haptic();
+    disegnaDiario();
+  } catch (e) { /* si rilegge riaprendo il profilo */ }
+};
+
+/* ------------------------------------------------------------- sapere */
+
+/* Rimandi a chi sa, non copie di cio' che sa.
+   Tutto quello che serve per decidere una gita sta su siti mantenuti da
+   servizi valanghe e istituti di ricerca: linkarli e' l'unica cosa corretta
+   da fare, sia per il diritto d'autore che perche' loro li aggiornano e noi
+   no. Se ti viene voglia di trascrivere qui una tabella che hai visto in
+   giro, rileggi questo commento. */
+const SAPERE = [
+  {
+    titolo: "Il bollettino, prima di ogni uscita",
+    nota: "L'app ne riporta un estratto. Quello che fa fede e' questo.",
+    voci: [
+      ["Bollettino valanghe Piemonte (ARPA)", "https://www.arpa.piemonte.it/bollettino/pericolo-valanghe",
+       "Versante italiano. Emesso ogni giorno dopo le 17, da dicembre a maggio."],
+      ["Risques d'avalanche - Alpes du Sud (Meteo-France)", "https://meteofrance.com/meteo-montagne/alpes-du-sud/risques-avalanche",
+       "Versante francese: Mercantour, Ubaye, alta Tinee."],
+      ["Tutti i bollettini italiani (AINEVA)", "https://bollettini.aineva.it/",
+       "Se esci fuori dal Piemonte."],
+    ],
+  },
+  {
+    titolo: "Capire cosa c'e' scritto",
+    nota: "Le definizioni ufficiali europee: sono le stesse parole che leggi nel bollettino.",
+    voci: [
+      ["La scala del pericolo, 1-5 (EAWS)", "https://www.avalanches.org/standards/avalanche-danger-scale/",
+       "Cosa vuol dire davvero \"grado 3\", che non e' \"medio\"."],
+      ["I problemi tipo (EAWS)", "https://www.avalanches.org/standards/avalanche-problems/",
+       "Neve fresca, neve ventata, strato debole persistente, neve bagnata, slittamento: sono quelli che l'app ti mostra con la rosa delle esposizioni."],
+    ],
+  },
+  {
+    titolo: "Imparare per davvero",
+    nota: "Niente di tutto questo si impara da un'app, nemmeno da questa.",
+    voci: [
+      ["White Risk (SLF Davos)", "https://www.whiterisk.ch",
+       "La piattaforma dell'istituto svizzero per la neve e le valanghe: lezioni, pianificazione, e l'Analyser per valutare le situazioni tipiche sul posto. In parte gratuita."],
+      ["AINEVA - formazione e manuali", "https://www.aineva.it/",
+       "Corsi e pubblicazioni dell'associazione dei servizi valanghe italiani."],
+      ["Le scuole di scialpinismo del CAI", "https://www.cai.it/",
+       "Un corso vero, con gente che ti guarda mentre sbagli. Vale piu' di qualunque schermo."],
+    ],
+  },
+];
+
+VISTE.sapere = async function () {
+  let h = `<div class="wrap"><h1>Sapere</h1>
+    <div class="hint">Quello che serve per decidere una gita non sta in
+      quest'app: sta sui siti di chi emette i bollettini e di chi insegna.
+      Qui ci sono i rimandi, aggiornati da loro.</div>`;
+
+  for (const sez of SAPERE) {
+    h += `<h2>${esc(sez.titolo)}</h2>
+      <div class="hint" style="margin:-4px 0 8px">${esc(sez.nota)}</div>`;
+    for (const [nome, url, spiega] of sez.voci) {
+      h += `<a class="card click" href="${esc(url)}" target="_blank" rel="noopener"
+        style="display:block;text-decoration:none">
+        <div class="titolo">${esc(nome)} &nearr;</div>
+        <div class="meta">${esc(spiega)}</div></a>`;
+    }
+  }
+
+  h += `<h2>Cosa fa quest'app, e cosa non fa</h2>
+    <div class="card">
+      <div class="meta"><b>Fa:</b> ti fa incontrare per condividere l'auto,
+        e ti riporta due dati misurati da altri &mdash; quanta neve e' caduta
+        secondo il modello meteo, e il grado di pericolo che ha emesso l'ente
+        competente, con le esposizioni e le quote che indica lui.</div>
+      <div class="meta" style="margin-top:10px"><b>Non fa:</b> non valuta la
+        sicurezza di un itinerario, non dice se una gita e' adatta a te oggi,
+        non incrocia il bollettino con l'esposizione della gita per dirti che
+        &laquo;ti riguarda&raquo;. Non e' pudore: nessun modello meteo conosce
+        la durezza degli strati, il limite fra neve nuova e vecchia, o quanto
+        sfondi senza sci. Quelle cose si guardano sul posto, con la pala in
+        mano, e si imparano a un corso.</div>
+      <div class="meta" style="margin-top:10px"><b>E un passaggio in auto non
+        e' una cordata:</b> chi guida non e' una guida, e la gita &mdash; con
+        chi farla, e se farla &mdash; resta una decisione tua.</div>
+    </div>
+    </div>`;
+  el.innerHTML = h;
 };
 
 /* ------------------------------------------------------------ passaggi */
@@ -763,8 +1056,15 @@ VISTE.profilo = async function () {
         onclick="chiudi(${u.id})">Chiudi</button>` : ""}
     </div>`;
   }
+  h += `<h2>Il mio diario</h2>
+    <div class="hint" style="margin-bottom:8px">Le gite che hai segnato come
+      fatte. Lo vedi solo tu: non entra nel riassunto della tua esperienza e
+      non compare sulle tue uscite.</div>
+    <div id="diario"><div class="hint">Carico...</div></div>`;
   h += `</div>`;
   el.innerHTML = h;
+
+  disegnaDiario();
 
   // a chi dichiara di non avere l'ARTVA non si chiede quando l'ha provato:
   // sarebbe una domanda senza senso, e il server la scarterebbe comunque
@@ -821,6 +1121,7 @@ window.vai = vai;
 (async function () {
   try {
     CONFIG = await api("/config");
+    mostraFasciaSimulazione(CONFIG.simulazione);
     try { PROFILO = await api("/profilo"); } catch (e) { /* fuori da Telegram */ }
     vai("weekend");
   } catch (e) {

@@ -120,13 +120,27 @@ AGGIORNA_DAL_BOT=1                          # aggiornamento notturno alle 4:00
 BBOX=6.55,44.00,7.95,44.75
 HTTP_USER_AGENT=ndoma-a-skie/1.0 (contatto: tua@email.it)
 WEBAPP_URL=                                 # si compila al passo 4
+SIMULAZIONE_INVERNO=2026-02-14              # dati di prova fuori stagione
 ```
 
-Meglio **non** impostare `DATABASE_URL`: lasciandolo vuoto il database
-finisce da solo in `$DATA_DIR/ndoma.db`, cioe' sul volume. Se lo imposti,
-dev'essere `sqlite:////data/ndoma.db` con **quattro** barre (percorso
-assoluto): il `.env` locale ne contiene uno relativo, che su Railway
-scriverebbe fuori dal volume e verrebbe perso a ogni deploy.
+**Non** impostare `DATABASE_URL`: lasciandolo vuoto il database finisce da
+solo in `$DATA_DIR/ndoma.db`, cioe' sul volume. Il `.env` locale contiene un
+percorso *relativo*, che dentro un container punta nell'immagine: a ogni
+deploy si perdono iscritti, preferenze e catalogo, e l'app riparte
+perfettamente, solo vuota. Se proprio lo imposti, servono **quattro** barre:
+`sqlite:////data/ndoma.db`.
+
+Un percorso relativo con `DATA_DIR` impostato viene comunque dirottato sul
+volume, con un avviso nei log - ma non e' una scusa per scriverlo male. Il
+controllo da fare dopo ogni deploy e' la prima riga dei log:
+
+```
+archivio: /data/ndoma.db - sul volume, 27.5 MB
+volume: ok, i dati sopravvivono ai deploy
+```
+
+Se invece dice `DENTRO L'IMMAGINE (si perde!)`, il volume non e' montato:
+`/api/salute` riporta la stessa cosa in `archivio.persistente`.
 
 **4. Genera il dominio**, in *Settings -> Networking -> Generate Domain*.
 Copia l'indirizzo in `WEBAPP_URL` e ridistribuisci: il bot scrive
@@ -243,6 +257,31 @@ Centimetri e grado ufficiale stanno **accanto** nella lista, senza che l'app
 dica come metterli in relazione: quel giudizio e' di chi va in montagna, sul
 bollettino integrale e sul terreno.
 
+### Provarla fuori stagione
+
+Da maggio a novembre non c'e' neve e il bollettino piemontese e' sospeso:
+senza dati l'app sembra rotta. `SIMULAZIONE_INVERNO=2026-02-14` fa girare
+tutto su una giornata d'inverno **realmente accaduta** - meteo storico da
+Open-Meteo, bollettino dall'archivio EAWS - spostando soltanto le etichette
+temporali sul prossimo weekend. I valori restano quelli veri: se il 14
+febbraio erano caduti 40 cm, in app si leggono 40 cm.
+
+Un grado di pericolo mostrato senza contesto e' pero' indistinguibile da
+quello di oggi, e qualcuno potrebbe usarlo per decidere una gita. Per questo:
+
+- l'ente emittente diventa `SIMULAZIONE - bollettino del <data>`, visibile
+  in ogni scheda;
+- l'app mostra una **fascia fissa e non chiudibile** in cima a ogni
+  schermata, che nomina la data vera dei dati;
+- del contenuto del bollettino non si tocca una parola: cambia l'etichetta
+  di chi lo ha emesso, non cio' che dice.
+
+Finche' la variabile c'e', l'aggiornamento notturno ricarica la simulazione
+invece dei dati di oggi - altrimenti alle 4:00 la cancellerebbe e la mattina
+l'app tornerebbe vuota. Per tornare alla realta': si toglie la variabile e si
+rilancia `scripts/aggiorna.py`. `scripts/prova_inverno.py` serve solo per
+provare un'altra data al volo, o per ripulire (`--pulisci`).
+
 ### Il match
 
 | Criterio | Punti |
@@ -261,6 +300,16 @@ in cache.
 chilometri in linea d'aria possono essere due valli diverse e novanta
 chilometri di strada. Gite diverse combaciano solo se stessa valle, stesso
 comune, o una sull'itinerario stradale dell'altra. Un test presidia la regola.
+
+**Un codice ISTAT, un formato solo.** Il GeoJSON dei comuni porta lo stesso
+codice come `"004078"` e come `4078`: l'indice spaziale leggeva il numero, la
+tabella dei comuni la stringa, e confrontando stringhe non erano mai uguali.
+Risultato: la regola che vale piu' di tutte, "il passeggero e' sulla strada di
+chi guida", non poteva scattare mai, e i paesi attraversati comparivano come
+numeri invece che come nomi. Nessun errore nei log, solo match che non
+arrivavano. Ora la normalizzazione (sei cifre) sta in `app/geo.istat_a_sei`,
+al punto d'ingresso, e `scripts/ripara_istat.py` sistema quello che era gia'
+finito in archivio - gira a ogni avvio e dopo la prima volta non fa niente.
 
 ### Chi c'e' in macchina
 
@@ -295,6 +344,48 @@ messaggio Telegram di match. Chi non compila niente non sparisce: si legge
 
 E una cosa scritta dove si legge: **un passaggio in auto non e' una cordata.**
 Chi guida non e' una guida, e ognuno decide la propria gita.
+
+### Quanto ci metti ad arrivare
+
+Ogni scheda gita dice quanti minuti di auto ci sono dal tuo comune, e da
+quali paesi passi. Non e' un dato in piu': e' lo stesso percorso stradale che
+serve al match. "Quanto ci metto?" e "chi passa da casa mia?" sono la stessa
+domanda vista da due lati, e infatti condividono la cache (`Percorso`).
+
+Il calcolo interseca il percorso con 867 poligoni comunali, quindi la prima
+volta il server risponde `in_calcolo` e lo fa in sottofondo: l'app richiede
+una volta dopo qualche secondo. Senza `ORS_API_KEY` il percorso e' una retta,
+i minuti non vengono mostrati affatto (fra due valli il tempo in auto non ha
+niente a che vedere con la distanza in linea d'aria) e i paesi sono dichiarati
+come approssimazione.
+
+### Il diario
+
+Le gite fatte, con data e una nota. **Privato per scelta, non per
+dimenticanza**: non esiste un endpoint per leggere il diario di un altro, non
+entra nel riassunto dell'esperienza, non compare sulle uscite. Un contatore di
+gite visibile diventa in fretta una classifica, e una classifica in montagna
+spinge nella direzione sbagliata.
+
+Raggruppato per stagione, non per anno civile: un inverno sta a cavallo di due
+anni e "2026" spezzerebbe a meta' la stagione di chi scia a gennaio.
+
+### Sapere
+
+Rimandi, non copie. Tutto quello che serve per decidere una gita sta su siti
+mantenuti da servizi valanghe e istituti di ricerca: ARPA Piemonte e
+Meteo-France per i bollettini, EAWS per la scala del pericolo e i problemi
+tipo, White Risk (SLF Davos) e AINEVA per imparare, il CAI per i corsi.
+
+Se ti viene la tentazione di trascrivere qui una tabella vista in giro -
+l'"Analyser" di SLF, per esempio - non farlo, e per due motivi. Non e' nostra:
+e' un'opera protetta, con un autore e un traduttore. E soprattutto e' uno
+strumento da campo per chi ha fatto un corso: metta' delle sue righe (durezza
+degli strati, limite di strato, profondita' di penetrazione, test sul manto)
+si compilano con la pala in mano, e nessun modello meteo le conosce.
+Pre-compilarla coi nostri dati vorrebbe dire produrre una nostra valutazione
+del pericolo, con l'aspetto di un giudizio professionale, in mano a chi non ha
+mai fatto un corso.
 
 ### Prestazioni
 

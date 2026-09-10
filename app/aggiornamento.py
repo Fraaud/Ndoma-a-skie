@@ -13,11 +13,18 @@ import time
 
 from sqlalchemy.orm import Session
 
-from app import schede
+from app import schede, simulazione
 from app.models import Condizioni, Gita
 
 
 async def aggiorna_tutto(db: Session, pausa: float = 0.25, verboso: bool = True) -> dict:
+    # Con la simulazione accesa si ricarica quella, non i dati di oggi:
+    # altrimenti l'aggiornamento notturno la cancellerebbe ogni notte alle
+    # quattro e la mattina l'app tornerebbe vuota senza che nessuno capisca
+    # perche'. Si spegne togliendo SIMULAZIONE_INVERNO.
+    if simulazione.attiva():
+        return await simulazione.carica(db, pausa=pausa, verboso=verboso)
+
     gite = db.query(Gita).filter(Gita.attiva.is_(True)).all()
     inizio = time.time()
     if verboso:

@@ -218,3 +218,27 @@ class CacheBollettino(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     fonte_url: Mapped[Optional[str]] = mapped_column(String(400))
     aggiornato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class Fatta(Base):
+    """Diario privato: le gite che uno ha fatto.
+
+    PRIVATO vuol dire privato. Non entra nel riassunto dell'esperienza che
+    leggono gli altri, non compare sulle uscite, non lo vede nessuno tranne
+    chi l'ha scritto. E' una scelta, non una dimenticanza: un contatore di
+    gite visibile diventa in fretta una classifica, e una classifica in
+    montagna spinge nella direzione sbagliata.
+
+    Serve a chi lo tiene: ricordarsi cosa ha fatto e quando, e rileggere le
+    proprie note l'anno dopo.
+    """
+
+    __tablename__ = "fatte"
+    __table_args__ = (UniqueConstraint("utente_id", "gita_id", "data", name="uq_fatta"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    utente_id: Mapped[int] = mapped_column(ForeignKey("utenti.id"), index=True)
+    gita_id: Mapped[int] = mapped_column(ForeignKey("gite.id"), index=True)
+    data: Mapped[dt.date] = mapped_column(Date, index=True)
+    nota: Mapped[Optional[str]] = mapped_column(String(500))
+    creato_il: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)

@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import settings  # noqa: E402
 from app.db import init_db, session_scope  # noqa: E402
+from app.geo import istat_a_sei  # noqa: E402
 from app.models import Comune  # noqa: E402
 
 MARGINE = 0.6  # gradi di margine attorno alla bbox: i percorsi partono da fuori
@@ -94,8 +95,11 @@ def popola_comuni(gj: dict | None = None) -> int:
     with session_scope() as db:
         for feat in gj.get("features", []):
             p = feat.get("properties", {})
-            istat = str(p.get("com_istat_code") or p.get("com_istat_code_num")
-                        or p.get("pro_com_t") or p.get("PRO_COM_T") or "").strip()
+            # stessa normalizzazione dell'indice spaziale: sei cifre. Il
+            # geojson porta lo stesso codice in due formati e usarne uno qui
+            # e l'altro la' e' esattamente il bug che ha rotto il match.
+            istat = istat_a_sei(p.get("com_istat_code") or p.get("com_istat_code_num")
+                                or p.get("pro_com_t") or p.get("PRO_COM_T")) or ""
             nome = p.get("name") or p.get("COMUNE") or p.get("comune")
             if not istat or not nome:
                 continue

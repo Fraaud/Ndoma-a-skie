@@ -17,12 +17,12 @@ from sqlalchemy.orm import Session
 
 from app import esperienza
 from app import notifiche as notifiche_srv
-from app import schede
+from app import archivio, schede, simulazione
 from app.auth import utente_corrente
 from app.config import settings
 from app.db import get_db, init_db
 from app.geo import comune_di, distanza_km
-from app.models import Comune, Condizioni, Gita, Match, Uscita, Utente
+from app.models import Comune, Condizioni, Fatta, Gita, Match, Uscita, Utente
 from app.services import match as match_srv
 from app.services import neve as neve_srv
 from app.services import routing as routing_srv
@@ -47,6 +47,14 @@ def _scalda_indici() -> None:
 @asynccontextmanager
 async def _ciclo_vita(app: FastAPI):
     init_db()
+    # Prima riga dei log a ogni avvio: se il database non e' sul volume si
+    # legge qui, invece di scoprirlo quando gli iscritti sono spariti.
+    print(archivio.riga_di_avvio())
+    if (s := archivio.stato()).get("avviso"):
+        print(f"ATTENZIONE: {s['avviso']}")
+    if (g := simulazione.giorno()):
+        print(f"SIMULAZIONE ATTIVA: dati del {g}, non di oggi "
+              "(l'app lo mostra in cima a ogni schermata)")
     print("Preparo gli indici geografici...")
     await asyncio.to_thread(_scalda_indici)
     yield
@@ -84,6 +92,10 @@ def config():
         "tile_attribution": settings.tile_attribution,
         "disclaimer": val_srv.DISCLAIMER,
         "bbox": settings.bbox,
+        # se c'e', l'app mostra una fascia fissa in cima a ogni schermata:
+        # un grado di pericolo senza contesto e' indistinguibile da quello
+        # di oggi, e qualcuno potrebbe usarlo per decidere una gita
+        "simulazione": simulazione.avviso_utente(),
     }
 
 
@@ -470,6 +482,131 @@ def percorso_uscita(uscita_id: int, db: Session = Depends(get_db)):
     }
 
 
+# ------------------------------------------------------- avvicinamento
+
+
+@app.get("/api/avvicinamento/{gita_id}")
+async def avvicinamento(
+    gita_id: int,
+    sfondo: BackgroundTasks,
+    u: Utente = Depends(utente_corrente),
+    db: Session = Depends(get_db),
+):
+    """Quanto ci metti ad arrivare all'attacco, e che paesi attraversi.
+
+    E' lo stesso percorso stradale che serve al match, riusato per chi
+    guarda una scheda: la domanda "quanto ci metto?" e "chi passa da casa
+    mia?" sono la stessa domanda vista da due lati.
+
+    Il calcolo e' pesante (interseca il percorso con 867 poligoni comunali)
+    e va in sottofondo: la prima volta si risponde "in_calcolo" e l'app
+    richiede tra qualche secondo, invece di tenere aperta una richiesta che
+    il webview di Telegram chiuderebbe.
+    """
+    g = db.get(Gita, gita_id)
+    if not g:
+        raise HTTPException(404, "gita non trovata")
+    if not u.istat_partenza or u.lat_partenza is None:
+        return {"stato": "senza_comune"}
+
+    from app.models import Percorso
+
+    p = (db.query(Percorso)
+         .filter_by(istat_partenza=u.istat_partenza, gita_id=g.id).one_or_none())
+    if p is None:
+        sfondo.add_task(_calcola_avvicinamento, u.istat_partenza,
+                        u.lat_partenza, u.lon_partenza, g.id)
+        return {"stato": "in_calcolo"}
+
+    nomi = {c.istat: c.nome
+            for c in db.query(Comune).filter(Comune.istat.in_(p.comuni_istat or [])).all()}
+    return {
+        "stato": "pronto",
+        "da": u.comune_partenza,
+        "minuti": round(p.minuti) if p.minuti else None,
+        "km": round(p.km) if p.km else None,
+        # Senza chiave di routing il percorso e' una retta: i minuti non
+        # esistono e i paesi sono un'approssimazione. Va detto, non nascosto.
+        "stimato": p.minuti is None,
+        "comuni": [nomi.get(i, i) for i in (p.comuni_istat or [])],
+    }
+
+
+async def _calcola_avvicinamento(istat: str, lat: float, lon: float, gita_id: int) -> None:
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        g = db.get(Gita, gita_id)
+        if g:
+            await routing_srv.calcola_percorso(db, istat, lat, lon, g)
+    except Exception as e:
+        print(f"avvicinamento {istat}->{gita_id} non calcolato: {e}")
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------- diario privato
+
+
+class NuovaFatta(BaseModel):
+    gita_id: int
+    data: str
+    nota: Optional[str] = Field(default=None, max_length=500)
+
+
+@app.get("/api/fatte")
+def elenco_fatte(u: Utente = Depends(utente_corrente), db: Session = Depends(get_db)):
+    """Il diario di chi chiede, e di nessun altro.
+
+    Non esiste un modo di leggere il diario di un'altra persona: non c'e'
+    l'endpoint. E' voluto - vedi il commento sul modello Fatta.
+    """
+    righe = (db.query(Fatta).filter(Fatta.utente_id == u.id)
+             .order_by(Fatta.data.desc()).limit(300).all())
+    gite = {g.id: g for g in db.query(Gita).filter(
+        Gita.id.in_([f.gita_id for f in righe] or [0])).all()}
+    return [{
+        "id": f.id, "data": f.data.isoformat(), "nota": f.nota,
+        "gita": schede.gita_dict(gite[f.gita_id]) if f.gita_id in gite else None,
+    } for f in righe]
+
+
+@app.post("/api/fatte")
+def segna_fatta(dati: NuovaFatta, u: Utente = Depends(utente_corrente),
+                db: Session = Depends(get_db)):
+    if not db.get(Gita, dati.gita_id):
+        raise HTTPException(404, "gita non trovata")
+    giorno = dt.date.fromisoformat(dati.data)
+    if giorno > dt.date.today():
+        raise HTTPException(400, "non puoi segnare una gita che non hai ancora fatto")
+    esistente = (db.query(Fatta)
+                 .filter_by(utente_id=u.id, gita_id=dati.gita_id, data=giorno)
+                 .one_or_none())
+    if esistente:
+        esistente.nota = (dati.nota or "").strip() or None
+        db.commit()
+        return {"id": esistente.id, "aggiornata": True}
+    f = Fatta(utente_id=u.id, gita_id=dati.gita_id, data=giorno,
+              nota=(dati.nota or "").strip() or None)
+    db.add(f)
+    db.commit()
+    return {"id": f.id, "aggiornata": False}
+
+
+@app.delete("/api/fatte/{fatta_id}")
+def cancella_fatta(fatta_id: int, u: Utente = Depends(utente_corrente),
+                   db: Session = Depends(get_db)):
+    # il filtro sull'utente e' la sicurezza: senza, con un id indovinato si
+    # cancellerebbe il diario di un altro
+    f = db.query(Fatta).filter_by(id=fatta_id, utente_id=u.id).one_or_none()
+    if not f:
+        raise HTTPException(404, "non trovata")
+    db.delete(f)
+    db.commit()
+    return {"cancellata": True}
+
+
 # --------------------------------------------------------- notifiche bot
 
 
@@ -486,9 +623,14 @@ def salute(db: Session = Depends(get_db)):
     return {
         "gite": db.query(Gita).count(),
         "comuni": db.query(Comune).count(),
+        "utenti": db.query(Utente).count(),
         "uscite_aperte": db.query(Uscita).filter(Uscita.stato == "aperta").count(),
         "geo_comuni": indice_comuni().disponibile,
         "geo_eaws": indice_eaws().disponibile,
         "ors_configurato": bool(settings.ors_api_key),
         "bot_configurato": bool(settings.telegram_bot_token),
+        "simulazione": (g.isoformat() if (g := simulazione.giorno()) else None),
+        # Se "persistente" e' falso, a ogni deploy si perdono utenti e
+        # catalogo: e' la cosa piu' importante da poter controllare da fuori.
+        "archivio": archivio.stato(),
     }

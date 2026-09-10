@@ -38,19 +38,64 @@ def _indirizzo(raw: str) -> str:
     return "https://" + raw
 
 
+def _url_database(data_dir: str) -> str:
+    """Dove sta il database, con una rete di sicurezza contro il caso peggiore.
+
+    Un percorso SQLite RELATIVO (sqlite:///./data/ndoma.db) dentro un
+    container punta al filesystem dell'immagine, che a ogni deploy viene
+    buttato via: e' il modo piu' facile di perdere gli iscritti senza
+    accorgersene, perche' l'app riparte perfettamente, solo vuota. E' un
+    errore quasi obbligatorio, perche' quel valore sta nel .env locale, dove
+    e' giusto, e copiarlo nelle variabili del servizio sembra ovvio.
+
+    Quindi: se DATA_DIR e' stato impostato di proposito - cioe' c'e' un
+    volume - un percorso relativo viene spostato sul volume, dicendolo.
+    Un percorso assoluto (quattro barre) o un database vero si rispettano
+    cosi' come sono.
+    """
+    raw = (os.getenv("DATABASE_URL") or "").strip()
+    if not raw:
+        return f"sqlite:///{data_dir}/ndoma.db"
+    if raw.startswith("sqlite:///") and not raw.startswith("sqlite:////"):
+        percorso = raw[len("sqlite:///"):]
+        if os.getenv("DATA_DIR") and not os.path.isabs(percorso):
+            corretto = f"sqlite:///{data_dir}/{os.path.basename(percorso) or 'ndoma.db'}"
+            print(f"ATTENZIONE: DATABASE_URL='{raw}' e' un percorso relativo e "
+                  f"andrebbe perso a ogni deploy.\n"
+                  f"            Con DATA_DIR impostato uso il volume: {corretto}")
+            return corretto
+    return raw
+
+
 class Settings:
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     webapp_url: str = _indirizzo(os.getenv("WEBAPP_URL", "")) or "http://localhost:8000"
     telegram_group_id: str = os.getenv("TELEGRAM_GROUP_ID", "")
+
+    # Giorno d'inverno da rigiocare, in formato AAAA-MM-GG. Se c'e', l'app
+    # gira su dati reali di quel giorno invece che su quelli di oggi, e lo
+    # dice in cima a ogni schermata. Vuoto = dati veri. Vedi app/simulazione.py
+    simulazione_giorno: str = os.getenv("SIMULAZIONE_INVERNO", "")
 
     skitour_api_key: str = os.getenv("SKITOUR_API_KEY", "")
     ors_api_key: str = os.getenv("ORS_API_KEY", "")
 
     bbox = _bbox(os.getenv("BBOX", "6.55,44.00,7.95,44.75"))
 
-    database_url: str = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/ndoma.db")
-    tile_url: str = os.getenv("TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
-    tile_attribution: str = os.getenv("TILE_ATTRIBUTION", "&copy; OpenStreetMap contributors")
+    database_url: str = _url_database(DATA_DIR)
+    # OpenTopoMap invece delle tile OSM standard: ha le curve di livello e
+    # l'ombreggiatura del rilievo, e in montagna e' la differenza fra una
+    # mappa che si legge e una macchia verde. Licenza CC-BY-SA, attribuzione
+    # obbligatoria (quella qui sotto e' la formula che chiedono loro).
+    # La loro politica d'uso ammette pochi download al secondo: per un
+    # gruppo di amici va bene, per migliaia di utenti serve un servizio a
+    # pagamento (MapTiler, Thunderforest) - si cambia solo questa variabile.
+    tile_url: str = os.getenv(
+        "TILE_URL", "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png")
+    tile_attribution: str = os.getenv(
+        "TILE_ATTRIBUTION",
+        "Dati: &copy; OpenStreetMap contributors, SRTM | "
+        "Stile: &copy; <a href=\"https://opentopomap.org\">OpenTopoMap</a> (CC-BY-SA)")
     user_agent: str = os.getenv("HTTP_USER_AGENT", "ndoma-a-skie/0.1")
 
     # File geografici scaricati da scripts/setup_geo.py
