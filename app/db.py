@@ -1,6 +1,7 @@
 """Sessione DB e inizializzazione."""
 from __future__ import annotations
 
+import sys
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -71,8 +72,11 @@ def _allinea_colonne(motore=None) -> list[str]:
                 conn.execute(text(
                     f'ALTER TABLE "{tabella.name}" ADD COLUMN "{col.name}" {tipo}'))
                 aggiunte.append(f"{tabella.name}.{col.name}")
+    # stderr: init_db() viene chiamata anche dagli script il cui stdout e'
+    # un dato da leggere (un conteggio, un elenco). Una diagnostica non deve
+    # mai mescolarsi al risultato.
     for a in aggiunte:
-        print(f"  database: aggiunta colonna {a}")
+        print(f"  database: aggiunta colonna {a}", file=sys.stderr)
     return aggiunte
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 
 from dotenv import load_dotenv
@@ -60,9 +61,14 @@ def _url_database(data_dir: str) -> str:
         percorso = raw[len("sqlite:///"):]
         if os.getenv("DATA_DIR") and not os.path.isabs(percorso):
             corretto = f"sqlite:///{data_dir}/{os.path.basename(percorso) or 'ndoma.db'}"
+            # su stderr, MAI su stdout: gli script di avvio leggono lo
+            # stdout di python per avere un numero, e un avviso stampato
+            # li' dentro diventa parte del risultato. E' costato tre
+            # passaggi saltati in silenzio a un deploy.
             print(f"ATTENZIONE: DATABASE_URL='{raw}' e' un percorso relativo e "
                   f"andrebbe perso a ogni deploy.\n"
-                  f"            Con DATA_DIR impostato uso il volume: {corretto}")
+                  f"            Con DATA_DIR impostato uso il volume: {corretto}",
+                  file=sys.stderr)
             return corretto
     return raw
 

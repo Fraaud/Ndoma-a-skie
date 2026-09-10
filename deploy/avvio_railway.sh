@@ -43,16 +43,40 @@ if [ ! -f "$DATI/comuni.geojson" ]; then
   python scripts/setup_geo.py || echo "   ATTENZIONE: preparazione dati non riuscita"
 fi
 
+# Conta le righe di una tabella. Sembra banale e non lo e': all'avvio i
+# moduli di python possono stampare avvisi (un DATABASE_URL da correggere,
+# una colonna aggiunta allo schema), e se finiscono nello stesso flusso del
+# numero il risultato diventa "ATTENZIONE: ...\n0" - che nel confronto di
+# bash fa "integer expression expected" e manda il controllo a vuoto in
+# silenzio. E' successo davvero: tre passaggi saltati e un'app vuota senza
+# spiegazione. Doppia difesa: gli avvisi vanno su stderr (vedi
+# app/config.py), e qui si tiene solo l'ultima riga e solo le cifre.
+conta() {
+  local n
+  n=$(python - "$1" 2>/dev/null <<'CONTA' | tail -n 1 | tr -cd '0-9'
+import sys, datetime as dt
+from app.db import SessionLocal, init_db
+from app.models import Comune, Condizioni, Gita
+init_db()
+db = SessionLocal()
+quale = sys.argv[1]
+if quale == "gite":
+    print(db.query(Gita).count())
+elif quale == "comuni":
+    print(db.query(Comune).count())
+else:
+    print(db.query(Condizioni).filter(Condizioni.giorno >= dt.date.today()).count())
+db.close()
+CONTA
+)
+  echo "${n:-0}"
+}
+
 # L'elenco dei comuni sta in archivio, non nel file: il geojson serve alla
 # geometria (che paesi attraversa un percorso), le righe servono alla ricerca
-# del comune di partenza. Copiare il file non basta, vanno scritte anche
-# quelle, se non ci sono gia'. Sono pochi secondi.
-if [ "$(python -c "
-from app.db import SessionLocal, init_db
-from app.models import Comune
-init_db()
-db = SessionLocal(); print(db.query(Comune).count()); db.close()
-" 2>/dev/null || echo 0)" -lt 100 ]; then
+# del comune di partenza - il campo senza il quale non si pubblica un'uscita.
+# Copiare il file non basta, vanno scritte anche quelle. Sono pochi secondi.
+if [ "$(conta comuni)" -lt 100 ]; then
   echo "   scrivo l'elenco dei comuni in archivio"
   python scripts/setup_geo.py --solo-archivio || echo "   ATTENZIONE: elenco comuni non scritto"
 fi
@@ -69,24 +93,9 @@ python scripts/ripara_istat.py || echo "   ATTENZIONE: riparazione ISTAT non riu
 # non e' mai partito - risultato, una vista Weekend vuota senza spiegazione.
 # Chiedendo a ognuno se il SUO lavoro e' fatto, un avvio successivo rimedia
 # da solo a quello che manca.
-conta() {
-  python - "$1" 2>/dev/null <<'CONTA' || echo 0
-import sys, datetime as dt
-from app.db import SessionLocal, init_db
-from app.models import Gita, Condizioni
-init_db()
-db = SessionLocal()
-if sys.argv[1] == "gite":
-    print(db.query(Gita).count())
-else:
-    print(db.query(Condizioni).filter(Condizioni.giorno >= dt.date.today()).count())
-db.close()
-CONTA
-}
-
 gite=$(conta gite)
 condizioni=$(conta condizioni)
-echo "   catalogo: ${gite:-0} itinerari, ${condizioni:-0} giornate di condizioni"
+echo "   catalogo: $gite itinerari, $condizioni giornate di condizioni, $(conta comuni) comuni"
 
 # Il catalogo si importa una volta sola. La soglia non e' zero: se un
 # tentativo si interrompe a meta' (rete, memoria, un deploy che riparte) il
@@ -94,14 +103,14 @@ echo "   catalogo: ${gite:-0} itinerari, ${condizioni:-0} giornate di condizioni
 # sempre. Reimportare non duplica niente: ogni itinerario si riconosce da
 # fonte + identificativo.
 lavoro=""
-if [ "${gite:-0}" -lt 300 ]; then
+if [ "$gite" -lt 300 ]; then
   echo "   catalogo incompleto: importo in sottofondo"
   lavoro="python scripts/importa.py"
 fi
 
 # Meteo e bollettini si rifanno comunque ogni notte: qui servono solo se non
 # c'e' proprio niente, cioe' al primo avvio o dopo un import interrotto.
-if [ "${condizioni:-0}" -eq 0 ]; then
+if [ "$condizioni" -eq 0 ]; then
   echo "   nessuna condizione in archivio: scarico meteo e bollettini"
   lavoro="${lavoro:+$lavoro && }python scripts/aggiorna.py"
 fi

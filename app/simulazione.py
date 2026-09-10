@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import sys
 
 import httpx
 from sqlalchemy.orm import Session
@@ -67,7 +68,9 @@ def giorno() -> dt.date | None:
     try:
         return dt.date.fromisoformat(grezzo)
     except ValueError:
-        print(f"SIMULAZIONE_INVERNO='{grezzo}' non e' una data AAAA-MM-GG: ignorata")
+        # su stderr, per la stessa ragione spiegata in app/config.py
+        print(f"SIMULAZIONE_INVERNO='{grezzo}' non e' una data AAAA-MM-GG: ignorata",
+              file=sys.stderr)
         return None
 
 
